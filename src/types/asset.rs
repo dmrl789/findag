@@ -1,19 +1,21 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AssetType {
-    Bond,
-    Equity,
-    Currency,
+    Fiat,
+    Crypto,
+    TokenizedStock,
     Derivative,
-    Custom(String),
+    Other(String),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetRecord {
-    pub id: String,               // Unique ID (e.g., ISIN or UUID)
-    pub asset_type: AssetType,    // Asset category
-    pub issuer: String,           // Address of issuing node
-    pub metadata: String,         // JSON or URI for off-chain info
-    pub loaded: bool,             // True = available for trade
+    pub asset_id: String,
+    pub name: String,
+    pub symbol: String,
+    pub asset_type: AssetType,
+    pub decimals: u8,
+    pub issuer: String, // .fd address
+    pub metadata: Option<String>,
 }

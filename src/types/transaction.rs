@@ -6,7 +6,9 @@ pub enum TxType {
     LoadAsset(AssetRecord),
     UnloadAsset(String), // ID of asset
     TransferAsset { id: String, from: String, to: String },
-    UpdateHandle { owner: String, new_handle: String },
+    UpdateHandle { owner: String, new_handle: String }, 
+    AuthorizeValidator,
+    RevokeValidator,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

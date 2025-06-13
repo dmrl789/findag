@@ -2,7 +2,7 @@ pub mod transaction;
 
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum ValidationError {
     #[error("Invalid initiator address")]
     InvalidInitiator,

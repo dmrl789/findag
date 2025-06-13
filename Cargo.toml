@@ -10,10 +10,28 @@ tokio = { version = "1.38", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 blake3 = "1.5"
-libp2p = { version = "0.53", features = ["tcp-tokio", "dns-tokio", "noise", "yamux", "gossipsub"] }
+
+libp2p = { version = "0.53", features = [
+    "dns", 
+    "tcp",
+    "gossipsub", 
+    "noise", 
+    "yamux", 
+    "mdns", 
+    "websocket", 
+    "request-response"
+] }
+
+futures = "0.3"
+sled = "0.34"
+warp = "0.3"
+tokio-tungstenite = "0.21"
+tungstenite = "0.21"
+log = "0.4"
+
 ed25519-dalek = "2.1"
 thiserror = "1.0"
-log = "0.4"
 env_logger = "0.11"
 base58 = "0.2"
 regex = "1.10"
+clap = { version = "4", features = ["derive"] }

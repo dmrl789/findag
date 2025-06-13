@@ -1,50 +1,32 @@
 use crate::blockchain::block::Block;
-use crate::utils::time::get_findag_time_micro;
-use serde::{Serialize, Deserialize};
-use blake3::Hasher;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Round {
-    pub round_id: u64,
-    pub timestamp: u64,
-    pub parent_rounds: Vec<String>,  // Round hash links
-    pub blocks_included: Vec<Block>,
+    pub round_id: String,
     pub validator: String,
-    pub round_hash: String,
+    pub blocks_included: Vec<Block>,
 }
 
 impl Round {
-    pub fn new(round_id: u64, parent_rounds: Vec<String>, blocks: Vec<Block>, validator: String) -> Self {
-        let timestamp = get_findag_time_micro();
-        let hash = Self::compute_hash(round_id, &parent_rounds, &blocks, &validator, timestamp);
+    pub fn new(round_id: String, validator: String, blocks: Vec<Block>) -> Self {
         Round {
             round_id,
-            timestamp,
-            parent_rounds,
-            blocks_included: blocks,
             validator,
-            round_hash: hash,
+            blocks_included: blocks,
         }
     }
 
-    fn compute_hash(
-        round_id: u64,
-        parent_rounds: &Vec<String>,
-        blocks: &Vec<Block>,
-        validator: &str,
-        timestamp: u64,
-    ) -> String {
-        let mut hasher = Hasher::new();
-        hasher.update(&round_id.to_le_bytes());
-        for parent in parent_rounds {
-            hasher.update(parent.as_bytes());
-        }
-        for block in blocks {
-            let block_bytes = serde_json::to_vec(block).unwrap();
-            hasher.update(&block_bytes);
-        }
-        hasher.update(validator.as_bytes());
-        hasher.update(&timestamp.to_le_bytes());
-        hasher.finalize().to_hex().to_string()
+    pub fn validate_blocks(&self) -> bool {
+        // Placeholder validation logic: in production, verify signatures, timestamps, etc.
+        !self.blocks_included.is_empty()
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(self).unwrap()
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Self {
+        serde_json::from_slice(data).unwrap()
     }
 }
