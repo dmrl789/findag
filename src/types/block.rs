@@ -16,5 +16,4 @@ pub struct RoundHash {
     pub timestamp: u64,
     pub validator_signature: String,
 }
-o
 

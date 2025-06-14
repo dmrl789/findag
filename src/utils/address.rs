@@ -5,7 +5,7 @@ use ed25519_dalek::PublicKey;
 
 pub enum AddressType {
     Standard,
-    Multisig,
+    Custom,
 }
 
 pub fn generate_address(public_key: &PublicKey, addr_type: AddressType) -> String {

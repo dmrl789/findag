@@ -16,3 +16,19 @@ pub struct GovernanceProposal {
     pub votes_for: Vec<String>,
     pub votes_against: Vec<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VoteType {
+    Yes,
+    No,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vote {
+    pub voter: String,
+    pub vote: VoteType,
+}
+
+pub type Proposal = GovernanceProposal;
+pub use Vote;
+pub use VoteType;

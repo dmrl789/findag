@@ -1,26 +1,27 @@
 use std::collections::HashSet;
 
-#[derive(Debug, Default)]
 pub struct ValidatorSet {
-    pub authorized: HashSet<String>,
+    pub validators: Vec<String>,
 }
 
 impl ValidatorSet {
     pub fn new() -> Self {
         Self {
-            authorized: HashSet::new(),
+            validators: Vec::new(),
         }
     }
 
     pub fn authorize(&mut self, key: &str) -> bool {
-        self.authorized.insert(key.to_string())
+        self.validators.push(key.to_string());
+        true
     }
 
     pub fn revoke(&mut self, key: &str) -> bool {
-        self.authorized.remove(key)
+        self.validators.retain(|k| k != key);
+        true
     }
 
     pub fn is_authorized(&self, key: &str) -> bool {
-        self.authorized.contains(key)
+        self.validators.contains(key)
     }
 }

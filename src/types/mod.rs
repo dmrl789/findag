@@ -1,3 +1,25 @@
-pub mod asset;
 pub mod transaction;
+pub mod asset;
 pub mod address;
+pub mod round;
+pub mod finality;
+pub mod block;
+pub mod wallet;
+pub mod vote;
+pub mod multisig;
+pub mod governance;
+pub mod ipfs;
+pub mod domain;
+
+pub use transaction::*;
+pub use asset::*;
+pub use address::*;
+pub use round::*;
+pub use finality::*;
+pub use block::*;
+pub use wallet::*;
+pub use vote::*;
+pub use multisig::*;
+pub use governance::*;
+pub use ipfs::*;
+pub use domain::*;

@@ -6,13 +6,12 @@ use std::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HandleRecord {
-    pub owner: String,
-    pub created_at: u64,
+    pub id: String,
+    pub data: String,
 }
 
 pub struct HandleRegistry {
-    db: Db,
-    authorized_nodes: Mutex<HashSet<String>>,
+    pub handles: std::collections::HashMap<String, HandleRecord>,
 }
 
 impl HandleRegistry {
@@ -48,7 +47,7 @@ impl HandleRegistry {
             return Err("Invalid `.fd` handle format.".into());
         }
 
-        if !self.is_authorized(&record.owner) {
+        if !self.is_authorized(&record.id) {
             return Err("Node is not authorized to register `.fd` domains.".into());
         }
 

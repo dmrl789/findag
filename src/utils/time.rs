@@ -1,6 +1,15 @@
-use chrono::Utc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn get_findag_time_micro() -> u128 {
-    let now = Utc::now();
-    now.timestamp_micros() as u128
+pub fn now_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+pub fn get_findag_time_micro() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as u64
 }

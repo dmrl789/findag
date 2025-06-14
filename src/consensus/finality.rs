@@ -1,5 +1,6 @@
 use crate::types::finality::{FinalityVote, Justification};
 use std::collections::{HashMap, HashSet};
+use hex;
 
 #[derive(Default)]
 pub struct FinalityManager {
@@ -21,9 +22,9 @@ impl FinalityManager {
 
     pub fn submit_vote(&mut self, vote: FinalityVote) {
         self.votes
-            .entry(vote.block_hash.clone())
-            .or_default()
-            .push(vote);
+            .entry(hex::encode(&vote.block_hash))
+            .or_insert_with(Vec::new)
+            .push(vote.clone());
     }
 
     pub fn is_finalized(&self, block_hash: &str) -> bool {
@@ -35,7 +36,7 @@ impl FinalityManager {
         if votes.len() >= self.finality_threshold {
             let justification = Justification {
                 block_hash: block_hash.to_string(),
-                signers: votes.iter().map(|v| v.signer.clone()).collect(),
+                signers: votes.iter().map(|v| hex::encode(&v.validator)).collect(),
             };
             self.finalized_blocks.insert(block_hash.to_string());
             self.justifications.insert(block_hash.to_string(), justification.clone());

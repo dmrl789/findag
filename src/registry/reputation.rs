@@ -35,7 +35,7 @@ impl ReputationEngine {
     }
 
     pub fn update_score(&self, peer_id: &str, new_uptime: u64, last_seen: u64) {
-        let score = self.db.get(peer_id).ok().flatten().and_then(|v| bincode::deserialize(&v).ok());
+        let score: Option<ValidatorScore> = self.db.get(peer_id).ok().flatten().and_then(|v| bincode::deserialize(&v).ok());
 
         let mut updated = match score {
             Some(mut s) => {
