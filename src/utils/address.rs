@@ -1,14 +1,29 @@
 use sha2::{Sha256, Digest};
 use ripemd::{Ripemd160};
 use base58::ToBase58;
-use ed25519_dalek::PublicKey;
+use ed25519_dalek::VerifyingKey;
+use std::error::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressType {
-    Standard,
-    Custom,
+    Standard,  // fd1
+    Contract,  // fd2
+    Validator, // fd3
+    Asset,     // fd4
 }
 
-pub fn generate_address(public_key: &PublicKey, addr_type: AddressType) -> String {
+impl AddressType {
+    pub fn to_prefix(&self) -> u8 {
+        match self {
+            AddressType::Standard => 0x00, // fd1
+            AddressType::Contract => 0x01, // fd2
+            AddressType::Validator => 0x02, // fd3
+            AddressType::Asset => 0x03, // fd4
+        }
+    }
+}
+
+pub fn generate_address(public_key: &VerifyingKey, addr_type: AddressType) -> String {
     let pk_bytes = public_key.as_bytes();
 
     // Step 1: SHA-256
@@ -18,10 +33,7 @@ pub fn generate_address(public_key: &PublicKey, addr_type: AddressType) -> Strin
     let ripemd = Ripemd160::digest(&sha256);
 
     // Step 3: Prefix
-    let prefix: u8 = match addr_type {
-        AddressType::Standard => 0x00, // fd1
-        AddressType::Multisig => 0x05, // fd3
-    };
+    let prefix: u8 = addr_type.to_prefix();
 
     let mut payload = vec![prefix];
     payload.extend(&ripemd);

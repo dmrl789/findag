@@ -75,7 +75,7 @@ async fn lookup_handler(query: HashMap<String, String>, store: DhtStore) -> Resu
     if let Some(hash_timer) = query.get("hash_timer") {
         let result = map.get(hash_timer).cloned();
         Ok(warp::reply::json(&DhtLookupResponse {
-            record: result,
+            record: result.clone(),
             found: result.is_some(),
         }))
     } else {

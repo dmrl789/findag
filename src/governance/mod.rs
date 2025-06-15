@@ -1,3 +1,4 @@
+pub mod proposals;
 pub mod types;
 pub mod validation;
 

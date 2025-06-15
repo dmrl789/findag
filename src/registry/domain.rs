@@ -1,6 +1,6 @@
 use crate::types::domain::DomainRecord;
-use crate::storage::DB;
-use crate::utils::time::current_timestamp_micros;
+use crate::storage::db;
+use crate::utils::time::get_findag_time_micro;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -29,7 +29,7 @@ impl DomainRegistry {
             DomainRecord {
                 domain,
                 owner,
-                updated_at: current_timestamp_micros(),
+                updated_at: get_findag_time_micro(),
                 metadata,
             },
         );

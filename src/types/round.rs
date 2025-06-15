@@ -5,47 +5,80 @@ use chrono;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundInfo {
     pub round_id: u64,
-    pub start_time: i64,
-    pub end_time: i64,
-    pub block_count: u32,
-    pub validator_count: u32,
-    pub status: RoundStatus,
+    pub proposer: String,
+    pub block_hash: String,
+    pub timestamp: i64,
+    pub state: RoundState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RoundStatus {
-    Active,
-    Completed,
-    Failed,
+pub struct RoundState {
+    pub round_id: u64,
+    pub phase: RoundPhase,
+    pub votes: Vec<String>,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundMessage {
+    pub round_id: u64,
+    pub sender: String,
+    pub message_type: MessageType,
+    pub content: Vec<u8>,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum RoundPhase {
+    Propose,
+    Prevote,
+    Precommit,
+    Commit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum MessageType {
+    Proposal,
+    Vote,
+    Timeout,
 }
 
 impl RoundInfo {
+    pub fn new(round_id: u64, proposer: &str, block_hash: &str) -> Self {
+        Self {
+            round_id,
+            proposer: proposer.to_string(),
+            block_hash: block_hash.to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+            state: RoundState {
+                round_id,
+                phase: RoundPhase::Propose,
+                votes: Vec::new(),
+                timestamp: chrono::Utc::now().timestamp(),
+            },
+        }
+    }
+}
+
+impl RoundState {
     pub fn new(round_id: u64) -> Self {
         Self {
             round_id,
-            start_time: chrono::Utc::now().timestamp(),
-            end_time: 0,
-            block_count: 0,
-            validator_count: 0,
-            status: RoundStatus::Active,
+            phase: RoundPhase::Propose,
+            votes: Vec::new(),
+            timestamp: chrono::Utc::now().timestamp(),
         }
     }
+}
 
-    pub fn complete(&mut self) {
-        self.end_time = chrono::Utc::now().timestamp();
-        self.status = RoundStatus::Completed;
-    }
-
-    pub fn fail(&mut self) {
-        self.end_time = chrono::Utc::now().timestamp();
-        self.status = RoundStatus::Failed;
-    }
-
-    pub fn add_block(&mut self) {
-        self.block_count += 1;
-    }
-
-    pub fn add_validator(&mut self) {
-        self.validator_count += 1;
+impl RoundMessage {
+    pub fn new(round_id: u64, sender: &str, message_type: MessageType, content: Vec<u8>) -> Self {
+        Self {
+            round_id,
+            sender: sender.to_string(),
+            message_type,
+            content,
+            timestamp: chrono::Utc::now().timestamp(),
+        }
     }
 } 

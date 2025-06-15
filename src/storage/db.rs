@@ -1,6 +1,10 @@
 use sled::{Db, IVec};
 use std::str;
 
+pub fn bytes_to_ivec(bytes: &[u8]) -> IVec {
+    IVec::from(bytes)
+}
+
 pub struct KVStore {
     db: Db,
 }

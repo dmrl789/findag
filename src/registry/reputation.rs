@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Serialize, Deserialize};
 use sled::Db;
 use tokio::time::{interval, Duration};
+use bincode::{self, DefaultOptions, Options};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ValidatorScore {
@@ -26,16 +27,33 @@ impl ReputationEngine {
         self.db
             .iter()
             .filter_map(|res| res.ok())
-            .filter_map(|(_, v)| bincode::deserialize(&v).ok())
+            .filter_map(|(_, v)| bincode::DefaultOptions::new()
+                .with_little_endian()
+                .with_fixint_encoding()
+                .deserialize(&v)
+                .ok())
             .collect()
     }
 
-    pub fn save_score(&self, score: &ValidatorScore) {
-        let _ = self.db.insert(score.peer_id.clone(), bincode::serialize(score).unwrap());
+    pub fn save_score(&self, score: &ValidatorScore) -> Result<(), String> {
+        let value = bincode::DefaultOptions::new()
+            .with_little_endian()
+            .with_fixint_encoding()
+            .serialize(score)
+            .map_err(|e| format!("Failed to serialize score: {}", e))?;
+        self.db.insert(score.peer_id.clone(), value)
+            .map_err(|e| format!("Failed to store score: {}", e))?;
+        Ok(())
     }
 
-    pub fn update_score(&self, peer_id: &str, new_uptime: u64, last_seen: u64) {
-        let score: Option<ValidatorScore> = self.db.get(peer_id).ok().flatten().and_then(|v| bincode::deserialize(&v).ok());
+    pub fn update_score(&self, peer_id: &str, new_uptime: u64, last_seen: u64) -> Result<(), String> {
+        let score: Option<ValidatorScore> = self.db.get(peer_id)
+            .map_err(|e| format!("Failed to get score: {}", e))?
+            .and_then(|v| bincode::DefaultOptions::new()
+                .with_little_endian()
+                .with_fixint_encoding()
+                .deserialize(&v)
+                .ok());
 
         let mut updated = match score {
             Some(mut s) => {
@@ -52,7 +70,7 @@ impl ReputationEngine {
             },
         };
 
-        self.save_score(&updated);
+        self.save_score(&updated)
     }
 
     pub fn start_background_updater(self) {
@@ -62,7 +80,9 @@ impl ReputationEngine {
                 interval.tick().await;
                 let now = chrono::Utc::now().timestamp() as u64;
                 for score in self.get_all() {
-                    self.update_score(&score.peer_id, 1, now);
+                    if let Err(e) = self.update_score(&score.peer_id, 1, now) {
+                        eprintln!("Failed to update score: {}", e);
+                    }
                 }
             }
         });

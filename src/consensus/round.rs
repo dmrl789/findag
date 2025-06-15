@@ -1,4 +1,4 @@
-use crate::blockchain::block::Block;
+use crate::types::block::Block;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

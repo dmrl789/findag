@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use crate::types::block::{Block, RoundHash};
-use crate::utils::hashtimer::HashTimer;
+use crate::blockchain::block::Block;
+use crate::types::block::{RoundHash};
 
 #[derive(Debug, Default, Clone)]
 pub struct DagState {
-    pub blocks: HashMap<String, Block>,
-    pub edges: HashMap<String, HashSet<String>>, // parent -> children
+    pub blocks: HashMap<Vec<u8>, Block>,
+    pub edges: HashMap<Vec<u8>, HashSet<Vec<u8>>>, // parent -> children
     pub round_hashes: Vec<RoundHash>,
 }
 

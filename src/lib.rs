@@ -1,30 +1,56 @@
-pub mod utils;
-pub mod blockchain;
-pub mod network;
-pub mod wallet;
-pub mod consensus {
-    pub mod finality;
-}
-pub mod types {
-    pub mod finality;
-}
-
-pub mod ai; // Add AI module
-
-pub mod registry {
-    pub mod reputation;
-    // ...
-}
-
-pub mod storage; // Ensure this line is p
 pub mod api;
-pub mod sync; // Added sync module for chain replay
-pub mod dht;
-pub mod validation;
+pub mod blockchain;
 pub mod cli;
-pub mod domain; // <-- Add this
-pub mod auth;
+pub mod consensus;
+pub mod domain;
 pub mod governance;
+pub mod network;
+pub mod registry;
+pub mod security;
+pub mod storage;
+pub mod sync;
+pub mod types;
+pub mod utils;
 pub mod vote;
-pub mod mempool;
+pub mod wallet;
 
+// Re-export commonly used types
+pub use types::{
+    address,
+    asset,
+    transaction,
+    round,
+    finality,
+};
+
+pub use utils::{
+    time,
+    crypto,
+};
+
+pub use blockchain::{
+    block,
+    state,
+};
+
+pub use consensus::{
+    validators,
+};
+
+pub use storage::{
+    db,
+};
+
+pub use security::{
+    audit,
+    monitoring,
+    response,
+};
+
+pub use registry::{
+    handle,
+    reputation,
+    multisig,
+};
+
+// ✅ Correct

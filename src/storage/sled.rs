@@ -1,27 +1,31 @@
 use std::path::Path;
-use sled::Db;
+pub use sled::Db;
+pub use sled::Error as SledError;
+pub use sled::Tree;
+pub use sled::IVec;
 
-pub struct Storage {
-    db: Db,
+pub struct KVStore {
+    tree: Tree,
 }
 
-impl Storage {
-    pub fn init(path: &str) -> Self {
-        let db = sled::open(path).expect("Failed to open database");
-        Self { db }
+impl KVStore {
+    pub fn new(tree: Tree) -> Self {
+        Self { tree }
     }
 
-    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.db.get(key).ok().flatten().map(|v| v.to_vec())
+    pub fn get(&self, key: &[u8]) -> Result<Option<IVec>, SledError> {
+        self.tree.get(key)
     }
 
-    pub fn set(&self, key: &[u8], value: &[u8]) -> Result<(), sled::Error> {
-        self.db.insert(key, value)?;
-        Ok(())
+    pub fn insert(&self, key: &[u8], value: &[u8]) -> Result<Option<IVec>, SledError> {
+        self.tree.insert(key, value)
     }
 
-    pub fn remove(&self, key: &[u8]) -> Result<(), sled::Error> {
-        self.db.remove(key)?;
-        Ok(())
+    pub fn remove(&self, key: &[u8]) -> Result<Option<IVec>, SledError> {
+        self.tree.remove(key)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Result<(IVec, IVec), SledError>> + '_ {
+        self.tree.iter()
     }
 }

@@ -1,8 +1,12 @@
+use crate::types::vote::VoteType;
 use crate::types::finality::{FinalityVote, Justification};
 use std::collections::{HashMap, HashSet};
 use hex;
+use serde::{Serialize, Deserialize};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct FinalityManager {
     pub votes: HashMap<String, Vec<FinalityVote>>,
     pub finalized_blocks: HashSet<String>,
@@ -34,13 +38,28 @@ impl FinalityManager {
     pub fn try_finalize(&mut self, block_hash: &str) -> Option<Justification> {
         let votes = self.votes.get(block_hash)?;
         if votes.len() >= self.finality_threshold {
-            let justification = Justification {
-                block_hash: block_hash.to_string(),
-                signers: votes.iter().map(|v| hex::encode(&v.validator)).collect(),
-            };
-            self.finalized_blocks.insert(block_hash.to_string());
-            self.justifications.insert(block_hash.to_string(), justification.clone());
-            Some(justification)
+            let (for_votes, against_votes) = votes.iter().fold((Vec::new(), Vec::new()), |(mut for_vec, mut against_vec), vote| {
+                match vote.vote_type {
+                    VoteType::For => for_vec.push(vote),
+                    VoteType::Against => against_vec.push(vote),
+                    _ => {}
+                }
+                (for_vec, against_vec)
+            });
+
+            if for_votes.len() >= self.finality_threshold {
+                let justification = Justification::new(
+                    block_hash,
+                    for_votes.iter().map(|v| v.validator.clone()).collect(),
+                    VoteType::For,
+                    for_votes.iter().map(|v| v.signature.clone()).collect(),
+                );
+                self.finalized_blocks.insert(block_hash.to_string());
+                self.justifications.insert(block_hash.to_string(), justification.clone());
+                Some(justification)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -48,5 +67,17 @@ impl FinalityManager {
 
     pub fn get_justification(&self, block_hash: &str) -> Option<&Justification> {
         self.justifications.get(block_hash)
+    }
+
+    pub fn get_vote_counts(&self, block_hash: &str) -> Option<(usize, usize)> {
+        self.votes.get(block_hash).map(|votes| {
+            votes.iter().fold((0, 0), |(for_count, against_count), vote| {
+                match vote.vote_type {
+                    VoteType::For => (for_count + 1, against_count),
+                    VoteType::Against => (for_count, against_count + 1),
+                    _ => (for_count, against_count),
+                }
+            })
+        })
     }
 }

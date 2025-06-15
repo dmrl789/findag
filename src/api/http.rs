@@ -1,10 +1,11 @@
-use warp::Filter;
+use warp::{Filter, Rejection, Reply};
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Mutex;
 use crate::registry::handle::{HandleRegistry, HandleRecord};
 use warp::http::StatusCode;
+use serde_json::json;
 
 pub fn handle_routes(
     registry: Arc<Mutex<HandleRegistry>>,
@@ -17,7 +18,7 @@ pub fn handle_routes(
     let lookup = warp::path!("lookup" / String)
         .and(warp::get())
         .and(with_registry(registry.clone()))
-        .and_then(lookup_handle);
+        .and_then(lookup_address);
 
     register.or(lookup)
 }
@@ -31,22 +32,36 @@ fn with_registry(
 async fn register_handle(
     handle: String,
     address: String,
-    registry: Arc<Mutex<HandleRegistry>>,
-) -> Result<impl warp::Reply, Infallible> {
-    let mut reg = registry.lock().unwrap();
-    match reg.register_handle(&handle, &address) {
-        Ok(_) => Ok(warp::reply::with_status("Handle registered", StatusCode::OK)),
-        Err(_) => Ok(warp::reply::with_status("Registration failed", StatusCode::BAD_REQUEST)),
+    reg: Arc<Mutex<HandleRegistry>>,
+) -> Result<impl Reply, Rejection> {
+    let record = HandleRecord {
+        id: handle.clone(),
+        data: address,
+        created_at: chrono::Utc::now().timestamp_millis() as u64,
+        owner: "system".to_string(),
+    };
+    
+    match reg.lock().unwrap().register_handle(&handle, &record) {
+        Ok(_) => Ok(warp::reply::json(&json!({
+            "status": "success",
+            "message": "Handle registered successfully"
+        }))),
+        Err(e) => Ok(warp::reply::json(&json!({
+            "status": "error",
+            "message": e.to_string()
+        }))),
     }
 }
 
-async fn lookup_handle(
+async fn lookup_address(
     handle: String,
-    registry: Arc<Mutex<HandleRegistry>>,
-) -> Result<impl warp::Reply, Infallible> {
-    let reg = registry.lock().unwrap();
-    match reg.lookup_address(&handle) {
-        Some(addr) => Ok(warp::reply::json(&addr)),
-        None => Ok(warp::reply::with_status("Handle not found", StatusCode::NOT_FOUND)),
+    reg: Arc<Mutex<HandleRegistry>>,
+) -> Result<impl Reply, Rejection> {
+    match reg.lock().unwrap().lookup_handle(&handle) {
+        Some(record) => Ok(warp::reply::json(&record)),
+        None => Ok(warp::reply::json(&json!({
+            "status": "error",
+            "message": "Handle not found"
+        }))),
     }
 }

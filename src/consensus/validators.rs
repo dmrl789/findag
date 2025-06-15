@@ -1,13 +1,16 @@
 use std::collections::HashSet;
 
+#[derive(Debug, Clone)]
 pub struct ValidatorSet {
-    pub validators: Vec<String>,
+    validators: Vec<String>,
+    total_stake: u64,
 }
 
 impl ValidatorSet {
     pub fn new() -> Self {
         Self {
             validators: Vec::new(),
+            total_stake: 0,
         }
     }
 
@@ -22,6 +25,6 @@ impl ValidatorSet {
     }
 
     pub fn is_authorized(&self, key: &str) -> bool {
-        self.validators.contains(key)
+        self.validators.iter().any(|k| k == key)
     }
 }

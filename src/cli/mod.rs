@@ -2,6 +2,8 @@ use clap::{Parser, Subcommand};
 use crate::types::address::FinDagKeypair;
 use crate::utils::address::{generate_address, AddressType};
 
+pub mod wallet;
+
 #[derive(Parser)]
 #[command(name = "findag-cli")]
 #[command(about = "FinDAG CLI Tools", long_about = None)]

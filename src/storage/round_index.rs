@@ -1,38 +1,38 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-
 use crate::types::round::RoundInfo;
+use sled::Db;
 
-#[derive(Clone, Default)]
 pub struct RoundIndex {
-    index: Arc<RwLock<HashMap<u64, RoundInfo>>>,
+    db: Db,
 }
 
 impl RoundIndex {
-    pub fn new() -> Self {
-        Self {
-            index: Arc::new(RwLock::new(HashMap::new())),
-        }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
-    pub fn insert(&self, round_number: u64, info: RoundInfo) {
-        self.index.write().unwrap().insert(round_number, info);
+    pub fn add_round(&self, round: &RoundInfo) -> Result<(), String> {
+        let key = round.round_id.to_le_bytes();
+        let value = serde_json::to_vec(round).map_err(|e| e.to_string())?;
+        self.db.insert(key, value).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
-    pub fn get(&self, round_number: u64) -> Option<RoundInfo> {
-        self.index.read().unwrap().get(&round_number).cloned()
+    pub fn get_latest_round(&self) -> Option<RoundInfo> {
+        self.db
+            .iter()
+            .filter_map(|item| {
+                item.ok().and_then(|(_, value)| {
+                    serde_json::from_slice::<RoundInfo>(&value).ok()
+                })
+            })
+            .max_by_key(|info: &RoundInfo| info.round_id)
     }
 
-    pub fn latest(&self) -> Option<RoundInfo> {
-        self.index
-            .read()
-            .unwrap()
-            .values()
-            .max_by_key(|info| info.round_number)
-            .cloned()
-    }
-
-    pub fn all(&self) -> Vec<RoundInfo> {
-        self.index.read().unwrap().values().cloned().collect()
+    pub fn get_round(&self, round_id: u64) -> Option<RoundInfo> {
+        self.db
+            .get(round_id.to_le_bytes())
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_slice(&value).ok())
     }
 }

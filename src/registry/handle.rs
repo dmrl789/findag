@@ -4,14 +4,51 @@ use sled::Db;
 use std::collections::HashSet;
 use std::sync::Mutex;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+lazy_static::lazy_static! {
+    static ref REGISTRY: HandleRegistry = HandleRegistry::new("handles.db");
+}
+
+pub fn register_handle(handle: &str, address: &str) -> Result<(), String> {
+    let record = HandleRecord {
+        id: handle.to_string(),
+        data: address.to_string(),
+        owner: "system".to_string(),
+        created_at: Utc::now().timestamp() as u64,
+    };
+    REGISTRY.register_handle(handle, &record)
+}
+
+pub fn resolve_handle(handle: &str) -> Option<String> {
+    REGISTRY.resolve_handle(handle)
+        .ok()
+        .flatten()
+        .map(|record| record.data)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandleRecord {
     pub id: String,
     pub data: String,
+    pub owner: String,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterRequest {
+    pub handle: String,
+    pub address: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveResponse {
+    pub handle: String,
+    pub address: String,
 }
 
 pub struct HandleRegistry {
     pub handles: std::collections::HashMap<String, HandleRecord>,
+    pub db: sled::Db,
+    pub authorized_nodes: Mutex<HashSet<String>>,
 }
 
 impl HandleRegistry {
@@ -22,6 +59,7 @@ impl HandleRegistry {
         authorized.insert("authorized_node_2".to_string());
 
         Self {
+            handles: std::collections::HashMap::new(),
             db,
             authorized_nodes: Mutex::new(authorized),
         }
@@ -54,18 +92,27 @@ impl HandleRegistry {
         match self.db.get(handle) {
             Ok(Some(_)) => Err("Handle already exists.".into()),
             Ok(None) => {
-                let value = serde_json::to_vec(record).unwrap();
-                self.db.insert(handle, value).unwrap();
+                let value = serde_json::to_vec(record)
+                    .map_err(|e| format!("Failed to serialize record: {}", e))?;
+                self.db.insert(handle, value)
+                    .map_err(|e| format!("Failed to store record: {}", e))?;
                 Ok(())
             }
             Err(e) => Err(format!("Storage error: {}", e)),
         }
     }
 
-    pub fn resolve_handle(&self, handle: &str) -> Option<HandleRecord> {
-        match self.db.get(handle) {
-            Ok(Some(value)) => serde_json::from_slice(&value).ok(),
-            _ => None,
+    pub fn resolve_handle(&self, handle: &str) -> Result<Option<HandleRecord>, String> {
+        match self.db.get(handle)
+            .map_err(|e| format!("Failed to get handle: {}", e))? {
+            Some(value) => serde_json::from_slice(&value)
+                .map_err(|e| format!("Failed to deserialize record: {}", e))
+                .map(Some),
+            None => Ok(None),
         }
+    }
+
+    pub fn lookup_handle(&self, handle: &str) -> Option<HandleRecord> {
+        self.resolve_handle(handle).ok().flatten()
     }
 }

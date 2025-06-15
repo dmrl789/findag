@@ -1,65 +1,71 @@
-pub mod monitoring;
-pub mod encryption;
+pub mod ai_analysis;
+pub mod ai_security;
+pub mod audit;
 pub mod authentication;
 pub mod authorization;
-pub mod audit;
-pub mod ai_analysis;
+pub mod encryption;
+pub mod monitoring;
 pub mod response;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use regex::Regex;
 use serde::{Serialize, Deserialize};
-use crate::lib::ai::AIService;
+use std::sync::Mutex;
+use crate::security::audit::{SecurityAuditLog as AuditLog, SecuritySeverity};
+// use crate::types::governance::ComplianceStatus;
 
 pub use monitoring::{SecurityMonitor, SystemMetrics, ThreatAlert, ThreatSeverity};
-pub use ai_analysis::{AISecurityAnalyzer, SecurityPattern, ThreatIntelligence};
 pub use response::{SecurityResponder, ResponseAction, ResponseResult, ResponseStatus};
-pub use audit::{AuditManager, AuditEvent, AuditEventType, ComplianceRequirement, ComplianceStatus};
+pub use audit::{AuditManager};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct SecurityConfig {
-    pub encryption_key: String,
-    pub jwt_secret: String,
-    pub rate_limit: u32,
-    pub max_retries: u32,
-    pub session_timeout: u64,
-    pub ai_model: String,
-    pub monitoring_interval: u64,
+    pub max_alerts: usize,
+    pub alert_ttl: Duration,
+    pub threat_threshold: f64,
     pub alert_thresholds: HashMap<String, f64>,
-    pub pattern_confidence_threshold: f32,
-    pub threat_confidence_threshold: f32,
+    pub audit_log_retention_days: u32,
+    pub max_requests_per_second: u32,
     pub auto_response_enabled: bool,
-    pub response_timeout_seconds: u64,
-    pub audit_log_retention_days: u64,
-    pub compliance_check_frequency_days: u64,
+    pub compliance_requirements: Vec<String>,
+    pub monitoring_interval: Duration,
+    pub max_failed_attempts: u32,
+    pub lockout_duration: Duration,
+    pub encryption_enabled: bool,
+    pub backup_enabled: bool,
+    pub backup_interval: Duration,
+    pub max_backup_size: usize,
+    pub alert_notification_channels: Vec<String>,
+    pub alert_threshold: f64,
+    pub block_threshold: f64,
+    pub response_timeout: u64,
 }
 
 impl Default for SecurityConfig {
     fn default() -> Self {
-        let mut alert_thresholds = HashMap::new();
-        alert_thresholds.insert("error_rate".to_string(), 0.1);
-        alert_thresholds.insert("response_time".to_string(), 1000.0);
-        alert_thresholds.insert("memory_usage".to_string(), 0.8);
-        alert_thresholds.insert("cpu_usage".to_string(), 0.9);
-
         Self {
-            encryption_key: "default_encryption_key".to_string(),
-            jwt_secret: "default_jwt_secret".to_string(),
-            rate_limit: 100,
-            max_retries: 3,
-            session_timeout: 3600,
-            ai_model: "gpt-3.5-turbo".to_string(),
-            monitoring_interval: 60,
-            alert_thresholds,
-            pattern_confidence_threshold: 0.7,
-            threat_confidence_threshold: 0.8,
-            auto_response_enabled: true,
-            response_timeout_seconds: 30,
-            audit_log_retention_days: 90,
-            compliance_check_frequency_days: 30,
+            max_alerts: 1000,
+            alert_ttl: Duration::from_secs(3600),
+            threat_threshold: 0.8,
+            alert_thresholds: HashMap::new(),
+            audit_log_retention_days: 30,
+            max_requests_per_second: 100,
+            auto_response_enabled: false,
+            compliance_requirements: Vec::new(),
+            monitoring_interval: Duration::from_secs(60),
+            max_failed_attempts: 5,
+            lockout_duration: Duration::from_secs(300),
+            encryption_enabled: true,
+            backup_enabled: true,
+            backup_interval: Duration::from_secs(86400),
+            max_backup_size: 1024 * 1024 * 100, // 100MB
+            alert_notification_channels: vec!["email".to_string()],
+            alert_threshold: 0.5,
+            block_threshold: 0.8,
+            response_timeout: 30,
         }
     }
 }
@@ -67,35 +73,92 @@ impl Default for SecurityConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityAuditLog {
     pub timestamp: u64,
-    pub action: String,
-    pub content_hash: String,
-    pub user_id: Option<String>,
-    pub status: String,
-    pub details: HashMap<String, String>,
+    pub source: String,
+    pub severity: SecuritySeverity,
+    pub message: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct RateLimit {
+    pub count: u32,
+    pub last_reset: u64,
+}
+
+#[derive(Debug)]
 pub struct SecurityManager {
     monitor: Arc<SecurityMonitor>,
-    analyzer: Arc<AISecurityAnalyzer>,
     responder: Arc<SecurityResponder>,
-    audit_manager: Arc<AuditManager>,
+    audit_manager: Arc<Mutex<AuditManager>>,
+    records: HashMap<String, Vec<ThreatAlert>>,
     config: SecurityConfig,
+    audit_logs: Arc<Mutex<Vec<SecurityAuditLog>>>,
+    rate_limits: HashMap<String, u32>,
+    compliance_status: Arc<Mutex<HashMap<String, bool>>>,
 }
 
 impl SecurityManager {
     pub fn new(config: SecurityConfig) -> Self {
-        let monitor = Arc::new(SecurityMonitor::new());
-        let analyzer = Arc::new(AISecurityAnalyzer::new());
-        let responder = Arc::new(SecurityResponder::new());
-        let audit_manager = Arc::new(AuditManager::new(analyzer.ai_service.clone()));
-
         Self {
-            monitor,
-            analyzer,
-            responder,
-            audit_manager,
+            monitor: Arc::new(SecurityMonitor::new()),
+            responder: Arc::new(SecurityResponder::new()),
+            audit_manager: Arc::new(Mutex::new(AuditManager::new())),
+            records: HashMap::new(),
             config,
+            audit_logs: Arc::new(Mutex::new(Vec::new())),
+            rate_limits: HashMap::new(),
+            compliance_status: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub async fn process_alerts(&self, alerts: Vec<ThreatAlert>) -> Result<Vec<ThreatAlert>, String> {
+        let mut processed_alerts = Vec::new();
+        for alert in alerts {
+            let action = self.responder.determine_action(&alert).await;
+            let result = match action {
+                ResponseAction::Block => self.responder.block_threat(&alert).await,
+                ResponseAction::Alert => self.responder.send_alert(&alert).await,
+                ResponseAction::Monitor => self.responder.monitor_threat(&alert).await,
+            };
+
+            if result.success {
+                self.log_audit_event(
+                    alert.source.clone(),
+                    SecuritySeverity::High,
+                    format!("Action taken: {:?}", action),
+                ).await;
+                processed_alerts.push(alert);
+            }
+        }
+        Ok(processed_alerts)
+    }
+
+    pub async fn log_audit_event(&self, source: String, severity: SecuritySeverity, message: String) -> Result<(), String> {
+        let log = SecurityAuditLog {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            source,
+            severity,
+            message,
+        };
+        let mut logs = self.audit_logs.lock().map_err(|e| e.to_string())?;
+        logs.push(log);
+        Ok(())
+    }
+
+    pub async fn get_audit_logs(&self) -> Result<Vec<SecurityAuditLog>, String> {
+        let logs = self.audit_logs.lock().map_err(|e| e.to_string())?;
+        Ok(logs.clone())
+    }
+
+    pub async fn check_rate_limit(&mut self, user_id: &str) -> Result<(), String> {
+        let current = self.rate_limits.get(user_id).copied().unwrap_or(0);
+        if current >= 100 {
+            return Err("Rate limit exceeded".to_string());
+        }
+        self.rate_limits.insert(user_id.to_string(), current + 1);
+        Ok(())
     }
 
     pub async fn process_metrics(&self, metrics: SystemMetrics) -> Result<Vec<ThreatAlert>, String> {
@@ -104,11 +167,20 @@ impl SecurityManager {
 
         // Log alerts to audit
         for alert in &alerts {
-            self.audit_manager.log_security_alert(alert.clone()).await;
+            let audit_log = AuditLog {
+                timestamp: alert.timestamp,
+                source: alert.source.clone(),
+                severity: match alert.severity {
+                    ThreatSeverity::Low => SecuritySeverity::Low,
+                    ThreatSeverity::Medium => SecuritySeverity::Medium,
+                    ThreatSeverity::High => SecuritySeverity::High,
+                    ThreatSeverity::Critical => SecuritySeverity::Critical,
+                },
+                message: alert.description.clone(),
+            };
+            let mut audit_manager = self.audit_manager.lock().unwrap();
+            audit_manager.log_security_event(audit_log).await;
         }
-
-        // Analyze metrics for patterns
-        let analysis = self.analyzer.analyze_metrics(metrics).await?;
 
         // Handle any critical threats
         for alert in &alerts {
@@ -116,7 +188,7 @@ impl SecurityManager {
                 let threat_id = self.responder.handle_threat(alert.clone()).await?;
                 
                 if self.config.auto_response_enabled {
-                    self.responder.execute_action(threat_id).await?;
+                    self.responder.execute_action(alert).await?;
                 }
             }
         }
@@ -124,62 +196,51 @@ impl SecurityManager {
         Ok(alerts)
     }
 
-    pub async fn log_audit_event(&self, event: AuditEvent) -> Result<(), String> {
-        self.audit_manager.log_event(event).await;
+    pub async fn add_compliance_requirement(&self, requirement: String, description: String) -> Result<(), String> {
+        let mut audit_manager = self.audit_manager.lock().unwrap();
+        audit_manager.add_compliance_requirement(requirement, description).await;
         Ok(())
     }
 
-    pub async fn get_audit_events(
-        &self,
-        event_type: Option<AuditEventType>,
-        severity: Option<ThreatSeverity>,
-        start_time: Option<chrono::DateTime<chrono::Utc>>,
-        end_time: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Vec<AuditEvent> {
-        self.audit_manager.get_events(event_type, severity, start_time, end_time).await
+    pub async fn check_compliance(&self, requirement: &str) -> Result<bool, String> {
+        let status = self.compliance_status.lock().map_err(|e| e.to_string())?;
+        Ok(status.get(requirement).copied().unwrap_or(false))
     }
 
-    pub async fn add_compliance_requirement(&self, requirement: ComplianceRequirement) -> Result<(), String> {
-        self.audit_manager.add_compliance_requirement(requirement).await;
+    pub async fn update_compliance(&self, requirement: &str, status: bool) -> Result<(), String> {
+        let mut compliance = self.compliance_status.lock().map_err(|e| e.to_string())?;
+        compliance.insert(requirement.to_string(), status);
         Ok(())
-    }
-
-    pub async fn get_compliance_status(&self) -> HashMap<String, ComplianceStatus> {
-        self.audit_manager.get_compliance_status().await
     }
 
     pub async fn generate_compliance_report(&self) -> String {
-        self.audit_manager.generate_compliance_report().await
+        let audit_manager = self.audit_manager.lock().unwrap();
+        audit_manager.generate_compliance_report().await
     }
 }
 
 pub async fn validate_content(content: &str) -> Result<(), String> {
-    // Check content length
-    if content.len() > 10000 {
-        return Err("Content exceeds maximum length".to_string());
+    // Basic content validation
+    if content.is_empty() {
+        return Err("Content cannot be empty".to_string());
     }
-
-    // Check for blocked keywords
-    let content_filter = Regex::new(r"(?i)(malware|exploit|hack|attack)").unwrap();
-    if content_filter.is_match(content) {
-        return Err("Content contains blocked keywords".to_string());
+    if content.len() > 1000000 {
+        return Err("Content too large".to_string());
     }
-
     Ok(())
 }
 
 pub async fn check_rate_limit(user_id: &str) -> Result<(), String> {
-    // Implementation of check_rate_limit function
+    // Basic rate limiting
     Ok(())
 }
 
 pub fn validate_category(category: &str) -> bool {
-    // Implementation of validate_category function
-    false
+    // Basic category validation
+    !category.is_empty() && category.len() <= 50
 }
 
 pub async fn verify_api_key(api_key: &str) -> bool {
-    // In a real implementation, this would verify the API key format and validity
-    // For now, just check if it's not empty and has a reasonable length
+    // Basic API key validation
     !api_key.is_empty() && api_key.len() >= 32
 } 

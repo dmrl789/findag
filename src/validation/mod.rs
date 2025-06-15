@@ -21,4 +21,13 @@ pub enum ValidationError {
 
     #[error("Signature check failed")]
     InvalidSignature,
+
+    #[error("Validation failed: {0}")]
+    Custom(String),
+}
+
+impl From<String> for ValidationError {
+    fn from(err: String) -> Self {
+        ValidationError::Custom(err)
+    }
 }

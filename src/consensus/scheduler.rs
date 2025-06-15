@@ -2,6 +2,10 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 use sled::Db;
 
+fn bytes_to_ivec(bytes: [u8; 8]) -> sled::IVec {
+    sled::IVec::from(bytes.to_vec())
+}
+
 #[derive(Clone, Debug)]
 pub struct ValidatorInfo {
     pub address: String,
@@ -23,7 +27,7 @@ impl Scheduler {
         for v in validators {
             let score = Scheduler::score_validator(v);
             scores.insert(v.address.clone(), score);
-            let _ = db.insert(v.address.as_bytes(), score.to_le_bytes());
+            let _ = db.insert(v.address.as_bytes(), bytes_to_ivec(score.to_le_bytes()));
         }
 
         let mut sorted: Vec<_> = scores.iter().collect();

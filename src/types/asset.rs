@@ -1,8 +1,9 @@
 use std::error::Error;
 use serde::{Deserialize, Serialize};
 use chrono;
+use serde_json;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AssetType {
     Token,
     NFT,
@@ -11,25 +12,38 @@ pub enum AssetType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssetRecord {
-    pub asset_id: String,
-    pub asset_type: AssetType,
-    pub owner: Vec<u8>,
-    pub metadata: Vec<u8>,
+pub struct Asset {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub owner: String,
+    pub metadata: serde_json::Value,
     pub created_at: i64,
     pub updated_at: i64,
 }
 
-impl AssetRecord {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetRecord {
+    pub asset: String,
+    pub version: u32,
+    pub signature: Vec<u8>,
+    pub timestamp: u64,
+    pub asset_type: String,
+}
+
+impl Asset {
     pub fn new(
-        asset_type: AssetType,
-        owner: Vec<u8>,
-        metadata: Vec<u8>,
+        id: String,
+        name: String,
+        description: String,
+        owner: String,
+        metadata: serde_json::Value,
     ) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
-            asset_id: String::new(), // TODO: Generate unique ID
-            asset_type,
+            id,
+            name,
+            description,
             owner,
             metadata,
             created_at: now,
@@ -37,15 +51,37 @@ impl AssetRecord {
         }
     }
 
-    pub fn update_metadata(&mut self, metadata: Vec<u8>) {
-        self.metadata = metadata;
-        self.updated_at = chrono::Utc::now().timestamp();
-    }
-
-    pub fn transfer(&mut self, new_owner: Vec<u8>) {
-        self.owner = new_owner;
+    pub fn update(&mut self, name: Option<String>, description: Option<String>, metadata: Option<serde_json::Value>) {
+        if let Some(name) = name {
+            self.name = name;
+        }
+        if let Some(description) = description {
+            self.description = description;
+        }
+        if let Some(metadata) = metadata {
+            self.metadata = metadata;
+        }
         self.updated_at = chrono::Utc::now().timestamp();
     }
 }
 
-pub use self::{AssetRecord, AssetType};
+impl AssetRecord {
+    pub fn new(asset: String, asset_type: String) -> Self {
+        Self {
+            asset,
+            version: 1,
+            signature: Vec::new(),
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
+            asset_type,
+        }
+    }
+
+    pub fn asset_id(&self) -> String {
+        format!("{}:{}", self.asset, self.version)
+    }
+
+    pub fn verify_signature(&self, _public_key: &[u8]) -> Result<bool, Box<dyn Error>> {
+        // TODO: Implement signature verification
+        Ok(true)
+    }
+}

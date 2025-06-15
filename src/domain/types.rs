@@ -6,7 +6,6 @@ pub struct Domain {
     pub name: String,
     pub description: String,
     pub metadata: HashMap<String, String>,
-    pub ai_analysis: Option<DomainAnalysis>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

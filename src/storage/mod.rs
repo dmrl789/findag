@@ -1,28 +1,64 @@
-pub mod db;
-pub mod round_index;
+pub mod asset;
 pub mod asset_index;
+pub mod db;
+pub mod finality_store;
+pub mod ipfs;
+pub mod round_index;
+pub mod sled;
 pub mod snapshot;
+pub mod types;
 
 use std::sync::Arc;
-use crate::blockchain::block::Block;
+use crate::types::block::Block;
 use std::error::Error;
 use std::path::Path;
-use sled::Db;
+use ::sled::open;
+use bincode::{self, Options};
+use hex;
+use tokio::sync::RwLock;
+use std::collections::HashMap;
+use std::fs;
+use std::io::{self, Read, Write};
+use std::time::{SystemTime, UNIX_EPOCH};
+use serde::{Serialize, Deserialize};
+use crate::storage::types::{AssetId, AssetType, PeerId};
 
-#[derive(Clone)]
+pub use db::{KVStore, bytes_to_ivec};
+
 pub struct Storage {
-    pub db: Arc<Db>,
-    db_path: String,
+    db: sled::Db,
+    pub db_path: String,
+    pub kv_store: KVStore,
+    assets: Arc<RwLock<HashMap<AssetId, AssetType>>>,
 }
 
 impl Storage {
-    pub fn init(db_path: &str) -> Self {
-        println!("Initializing storage at {}", db_path);
-        let db = sled::open(db_path).expect("Failed to open DB");
-        Storage {
-            db: Arc::new(db),
-            db_path: db_path.to_string(),
+    pub fn new(path: &Path) -> Result<Self, Box<dyn Error>> {
+        let db = open(path)?;
+        let kv_store = KVStore::new(path.to_str().ok_or("Invalid path")?);
+        Ok(Self {
+            db,
+            kv_store,
+            db_path: path.to_str().ok_or("Invalid path")?.to_string(),
+            assets: Arc::new(RwLock::new(HashMap::new())),
+        })
+    }
+
+    pub fn get_block(&self, hash: &[u8]) -> Result<Option<Block>, Box<dyn std::error::Error>> {
+        let key = format!("block:{}", hex::encode(hash));
+        if let Some(data) = self.db.get(key)? {
+            let block = bincode::deserialize(&data)?;
+            Ok(Some(block))
+        } else {
+            Ok(None)
         }
+    }
+
+    pub fn store_block(&self, block: &Block) -> Result<(), Box<dyn std::error::Error>> {
+        let key = format!("block:{}", hex::encode(block.timestamp.to_le_bytes()));
+        let data = bincode::serialize(block)?;
+        self.db.insert(key, data)?;
+        Ok(())
     }
 
     pub fn get_all_blocks_sorted(&self) -> Vec<Block> {
@@ -41,19 +77,74 @@ impl Storage {
     }
 
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
-        println!("Getting value for key: {:?}", key);
-        Ok(self.db.get(key)?.map(|v| v.to_vec()))
+        match self.db.get(key)? {
+            Some(data) => Ok(Some(data.to_vec())),
+            None => Ok(None),
+        }
     }
 
-    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<(), Box<dyn Error>> {
-        println!("Putting value for key: {:?}", key);
+    pub fn set(&self, key: &[u8], value: &[u8]) -> Result<(), Box<dyn Error>> {
         self.db.insert(key, value)?;
         Ok(())
     }
 
     pub fn delete(&self, key: &[u8]) -> Result<(), Box<dyn Error>> {
-        println!("Deleting value for key: {:?}", key);
         self.db.remove(key)?;
+        Ok(())
+    }
+
+    pub fn scan_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Box<dyn Error>> {
+        let mut result = Vec::new();
+        for item in self.db.scan_prefix(prefix) {
+            let (key, value) = item?;
+            let key_vec = key.to_vec();
+            let value_vec = value.to_vec();
+            result.push((key_vec, value_vec));
+        }
+        Ok(result)
+    }
+
+    pub fn get_blocks(&self) -> Result<Vec<Block>, Box<dyn Error>> {
+        let mut blocks = Vec::new();
+        for item in self.db.scan_prefix(b"block:") {
+            let (_, value) = item?;
+            let value_vec = value.to_vec();
+            let block: Block = bincode::deserialize(&value_vec)?;
+            blocks.push(block);
+        }
+        Ok(blocks)
+    }
+
+    pub fn save_block(&self, block: &Block) -> Result<(), Box<dyn Error>> {
+        let key = format!("block:{}", hex::encode(&block.hash));
+        let value = bincode::serialize(block)?;
+        self.db.insert(key.as_bytes(), value)?;
+        Ok(())
+    }
+
+    pub async fn store_asset(&self, asset: AssetType) -> Result<AssetId, Box<dyn Error>> {
+        let mut assets = self.assets.write().await;
+        let asset_id = AssetId::new(format!("asset_{}", assets.len()));
+        assets.insert(asset_id.clone(), asset);
+        Ok(asset_id)
+    }
+
+    pub async fn get_asset(&self, asset_id: &AssetId) -> Result<Option<AssetType>, Box<dyn Error>> {
+        let assets = self.assets.read().await;
+        Ok(assets.get(asset_id).cloned())
+    }
+
+    pub async fn list_assets(&self) -> Vec<(AssetId, AssetType)> {
+        let assets = self.assets.read().await;
+        assets.iter()
+            .map(|(id, asset)| (id.clone(), asset.clone()))
+            .collect()
+    }
+
+    pub async fn remove_asset(&self, asset_id: &AssetId) -> Result<(), Box<dyn Error>> {
+        let mut assets = self.assets.write().await;
+        assets.remove(asset_id)
+            .ok_or_else(|| "Asset not found".to_string())?;
         Ok(())
     }
 }

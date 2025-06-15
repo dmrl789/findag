@@ -3,26 +3,36 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
-use crate::lib::ai::{AIService, AIRequest};
+// use crate::lib::ai::{AIService, AIRequest};
 use crate::security::{SecurityManager, SecurityConfig, SecurityAuditLog};
+use std::fmt;
+use crate::security::audit::SecuritySeverity;
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub enum ThreatSeverity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl fmt::Display for ThreatSeverity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ThreatSeverity::Low => write!(f, "Low"),
+            ThreatSeverity::Medium => write!(f, "Medium"),
+            ThreatSeverity::High => write!(f, "High"),
+            ThreatSeverity::Critical => write!(f, "Critical"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatAlert {
-    pub timestamp: u64,
-    pub severity: ThreatSeverity,
     pub source: String,
     pub description: String,
-    pub affected_components: Vec<String>,
-    pub recommended_actions: Vec<String>,
-    pub confidence_score: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ThreatSeverity {
-    Info,
-    Warning,
-    Critical,
-    Emergency,
+    pub severity: ThreatSeverity,
+    pub timestamp: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,9 +43,8 @@ pub struct SystemMetrics {
     pub anomalies: Vec<String>,
 }
 
+#[derive(Debug)]
 pub struct SecurityMonitor {
-    security_manager: Arc<SecurityManager>,
-    ai_service: Arc<AIService>,
     alerts: Arc<RwLock<VecDeque<ThreatAlert>>>,
     metrics_history: Arc<RwLock<HashMap<String, VecDeque<SystemMetrics>>>>,
     alert_thresholds: HashMap<String, f64>,
@@ -43,7 +52,7 @@ pub struct SecurityMonitor {
 }
 
 impl SecurityMonitor {
-    pub fn new(security_config: SecurityConfig) -> Self {
+    pub fn new() -> Self {
         let mut alert_thresholds = HashMap::new();
         alert_thresholds.insert("error_rate".to_string(), 0.1);
         alert_thresholds.insert("response_time".to_string(), 1000.0);
@@ -51,8 +60,6 @@ impl SecurityMonitor {
         alert_thresholds.insert("cpu_usage".to_string(), 0.9);
 
         Self {
-            security_manager: Arc::new(SecurityManager::new(security_config.clone())),
-            ai_service: Arc::new(AIService::new(security_config)),
             alerts: Arc::new(RwLock::new(VecDeque::with_capacity(1000))),
             metrics_history: Arc::new(RwLock::new(HashMap::new())),
             alert_thresholds,
@@ -60,7 +67,7 @@ impl SecurityMonitor {
         }
     }
 
-    pub async fn record_metrics(&self, metrics: SystemMetrics) -> Result<(), String> {
+    pub async fn record_metrics(&self, metrics: SystemMetrics) -> Result<Vec<ThreatAlert>, String> {
         // Store metrics
         let mut history = self.metrics_history.write().await;
         let component_history = history
@@ -79,7 +86,9 @@ impl SecurityMonitor {
             *self.last_analysis.write().await = Instant::now();
         }
 
-        Ok(())
+        // Return current alerts
+        let alerts = self.alerts.read().await;
+        Ok(alerts.iter().cloned().collect())
     }
 
     async fn analyze_metrics(&self) -> Result<(), String> {
@@ -91,47 +100,28 @@ impl SecurityMonitor {
                 continue;
             }
 
-            // Prepare metrics for AI analysis
-            let metrics_str = serde_json::to_string(&metrics).map_err(|e| e.to_string())?;
-            
-            let prompt = format!(
-                "Analyze the following system metrics for security threats and anomalies:\n\
-                 Component: {}\n\
-                 Metrics: {}\n\
-                 \n\
-                 Please provide:\n\
-                 1. Threat severity (Info/Warning/Critical/Emergency)\n\
-                 2. Description of potential threats\n\
-                 3. Affected components\n\
-                 4. Recommended actions\n\
-                 5. Confidence score (0-1)\n\
-                 Format the response as JSON with these fields: severity, description, affected_components, recommended_actions, confidence_score",
-                component,
-                metrics_str
-            );
-
-            let request = AIRequest {
-                prompt,
-                model: Some("gpt-3.5-turbo".to_string()),
-                temperature: Some(0.3),
-                max_tokens: Some(500),
-            };
-
-            match self.ai_service.generate_response(request, "security_monitor").await {
-                Ok(response) => {
-                    if let Ok(alert) = serde_json::from_str::<ThreatAlert>(&response.text) {
-                        if alert.confidence_score >= 0.7 {
-                            alerts.push_back(alert);
-                            if alerts.len() > 1000 {
-                                alerts.pop_front();
-                            }
-                        }
+            // Check thresholds for each metric
+            for (metric_name, value) in &metrics.back().unwrap().metrics {
+                if let Some(threshold) = self.alert_thresholds.get(metric_name) {
+                    if value > threshold {
+                        let alert = ThreatAlert {
+                            source: component.clone(),
+                            description: format!("{} exceeded threshold: {} > {}", metric_name, value, threshold),
+                            severity: ThreatSeverity::High,
+                            timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs(),
+                        };
+                        alerts.push_back(alert);
                     }
                 }
-                Err(e) => {
-                    println!("Failed to analyze metrics: {}", e);
-                }
             }
+        }
+
+        // Trim alerts if needed
+        while alerts.len() > 1000 {
+            alerts.pop_front();
         }
 
         Ok(())
@@ -149,6 +139,14 @@ impl SecurityMonitor {
         }
     }
 
+    pub async fn add_alert(&self, alert: ThreatAlert) {
+        let mut alerts = self.alerts.write().await;
+        alerts.push_back(alert);
+        while alerts.len() > 1000 {
+            alerts.pop_front();
+        }
+    }
+
     pub async fn get_component_metrics(&self, component: &str) -> Vec<SystemMetrics> {
         let history = self.metrics_history.read().await;
         history.get(component)
@@ -156,28 +154,24 @@ impl SecurityMonitor {
             .unwrap_or_default()
     }
 
-    pub async fn check_thresholds(&self, component: &str, metric_name: &str, value: f64) -> bool {
-        if let Some(threshold) = self.alert_thresholds.get(metric_name) {
-            value > *threshold
+    pub fn check_thresholds(&self, metric: &str, value: f64) -> bool {
+        if let Some(threshold) = self.alert_thresholds.get(metric) {
+            value < *threshold
         } else {
-            false
+            true
         }
     }
 
+    pub fn set_threshold(&mut self, metric: &str, threshold: f64) {
+        self.alert_thresholds.insert(metric.to_string(), threshold);
+    }
+
     pub async fn log_security_event(&self, alert: ThreatAlert) {
-        self.security_manager.log_audit(SecurityAuditLog {
-            timestamp: alert.timestamp,
-            action: "THREAT_DETECTED".to_string(),
-            content_hash: self.hash_alert(&alert),
-            user_id: None,
-            status: format!("{:?}", alert.severity),
-            details: {
-                let mut details = HashMap::new();
-                details.insert("description".to_string(), alert.description);
-                details.insert("confidence".to_string(), alert.confidence_score.to_string());
-                details
-            },
-        }).await;
+        let mut alerts = self.alerts.write().await;
+        alerts.push_back(alert);
+        while alerts.len() > 1000 {
+            alerts.pop_front();
+        }
     }
 
     fn hash_alert(&self, alert: &ThreatAlert) -> String {
