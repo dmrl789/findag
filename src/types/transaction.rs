@@ -1,4 +1,4 @@
-use crate::storage::types::AssetType;
+use crate::types::Asset;
 use serde::{Serialize, Deserialize};
 use std::error::Error;
 use sha2::{Sha256, Digest};
@@ -7,69 +7,71 @@ use hex;
 use chrono;
 use std::fmt;
 use crate::utils::crypto::verify_signature;
+use blake3::Hash;
+use std::time::SystemTime;
+use base64;
+use base64::Engine;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TransactionStatus {
+    Pending,
+    Confirmed,
+    Failed,
+    Rejected,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TxType {
     Transfer,
-    LoadAsset(AssetType),
+    LoadAsset(Asset),
     UnloadAsset(String),
     TransferAsset { id: String, from: String, to: String },
     UpdateHandle { owner: String, new_handle: String },
     RevokeValidator,
-    CreateAsset(AssetType),
+    CreateAsset(Asset),
     AuthorizeValidator,
     GovernanceVote,
     FinalityVote,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
-    pub tx_type: TxType,
-    pub from: Vec<u8>,
-    pub to: Vec<u8>,
-    pub amount: u64,
-    pub payload: Vec<u8>,
-    pub initiator: String,
     pub hash: Vec<u8>,
-    pub signature: Vec<u8>,
-    pub timestamp: u64,
     pub data: Vec<u8>,
+    pub timestamp: SystemTime,
+    pub signature: String,
+    pub public_key: Vec<u8>,
+    pub status: TransactionStatus,
 }
 
 impl Transaction {
-    pub fn new(tx_type: TxType, from: Vec<u8>, to: Vec<u8>, amount: u64, payload: Vec<u8>, initiator: String, timestamp: u64, data: Vec<u8>) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(&timestamp.to_le_bytes());
-        hasher.update(&data);
-        let hash = hasher.finalize().to_vec();
+    pub fn new(data: Vec<u8>, signature: String, public_key: Vec<u8>) -> Self {
         Self {
-            tx_type,
-            from,
-            to,
-            amount,
-            payload,
-            initiator,
-            hash,
-            signature: Vec::new(),
-            timestamp,
+            hash: vec![0u8; 32],
             data,
+            timestamp: SystemTime::now(),
+            signature,
+            public_key,
+            status: TransactionStatus::Pending,
         }
     }
 
-    pub fn hash(&self) -> &[u8] {
-        &self.hash
+    pub fn hash(&self) -> Vec<u8> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&self.data);
+        hasher.update(self.signature.as_bytes());
+        hasher.update(&self.public_key);
+        hasher.finalize().as_bytes().to_vec()
     }
 
-    pub fn verify_signature(&self) -> Result<bool, Box<dyn Error>> {
-        // TODO: Implement signature verification
-        Ok(true)
+    pub fn signature(&self) -> Result<Signature, Box<dyn Error>> {
+        let signature_bytes = base64::engine::general_purpose::STANDARD.decode(&self.signature)?;
+        let signature_array: [u8; 64] = signature_bytes.try_into().map_err(|_| "Invalid signature length")?;
+        Ok(Signature::from_bytes(&signature_array))
     }
-}
 
-impl fmt::Display for Transaction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Transaction {{ sender: {}, recipient: {}, amount: {}, timestamp: {} }}",
-            self.initiator, hex::encode(&self.to), self.amount, self.timestamp)
+    pub fn set_status(&mut self, status: TransactionStatus) {
+        self.status = status;
     }
 }
 

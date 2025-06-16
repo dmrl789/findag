@@ -371,4 +371,76 @@ Remember to:
 - Maintain comprehensive logs
 - Analyze trends and patterns
 - Implement automated responses
-- Keep documentation up to date 
+- Keep documentation up to date
+
+## 8. Financial Storage System for Financial Institutions
+
+FinDAG provides a specialized storage module for financial institutions, designed to meet strict regulatory, security, and audit requirements.
+
+### Features
+- Regulatory compliance (SOX, PCI DSS, GDPR, GLBA, Basel III)
+- AES-256-GCM encryption
+- Multi-factor authentication (MFA), IP whitelisting, and RBAC
+- Tamper-evident audit logging
+- Configurable backup and retention
+- Automated compliance verification
+
+### Configuration Example
+```rust
+use findag::storage::financial::{FinancialStorage, FinancialStorageConfig, ComplianceConfig, SecurityConfig, RetentionConfig, RegulatoryRequirement, EncryptionStandard, AccessControlLevel, BackupFrequency, AccessContext};
+use std::path::PathBuf;
+
+let config = FinancialStorageConfig {
+    primary_storage_path: PathBuf::from("/secure/storage"),
+    backup_storage_path: PathBuf::from("/secure/backup"),
+    audit_log_path: PathBuf::from("/secure/audit"),
+    encryption_key_path: PathBuf::from("/secure/keys"),
+    compliance_config: ComplianceConfig {
+        regulatory_requirements: vec![
+            RegulatoryRequirement::SOX,
+            RegulatoryRequirement::PCI_DSS,
+            RegulatoryRequirement::GLBA,
+        ],
+        audit_trail_enabled: true,
+        data_retention_years: 7,
+        encryption_standard: EncryptionStandard::FIPS140_2,
+        access_control_level: AccessControlLevel::Level3,
+    },
+    security_config: SecurityConfig {
+        encryption_enabled: true,
+        encryption_algorithm: "AES-256-GCM".to_string(),
+        key_rotation_days: 30,
+        access_control: AccessControlConfig {
+            role_based_access: true,
+            multi_factor_auth: true,
+            ip_whitelist: vec!["10.0.0.0/24".to_string()],
+            session_timeout_minutes: 15,
+        },
+        audit_logging: AuditLogConfig {
+            log_all_operations: true,
+            log_retention_days: 365,
+            alert_on_suspicious: true,
+        },
+    },
+    retention_config: RetentionConfig {
+        retention_period_years: 7,
+        archive_enabled: true,
+        archive_path: PathBuf::from("/secure/archive"),
+        backup_frequency: BackupFrequency::Daily,
+    },
+};
+
+let storage = FinancialStorage::new(config)?;
+let access_context = AccessContext {
+    user_id: "user123".to_string(),
+    role: "compliance_officer".to_string(),
+    ip_address: "10.0.0.1".to_string(),
+    mfa_verified: true,
+    session_id: "session123".to_string(),
+};
+
+storage.store_block(block, block_number).await?;
+```
+
+- See `src/storage/financial.rs` for implementation details.
+- Ensure your deployment meets your jurisdiction's compliance requirements. 

@@ -1,4 +1,3 @@
-use crate::types::vote::{VoteType, Ballot};
 use crate::types::governance::{Proposal, ProposalStatus};
 use crate::utils::crypto::verify_signature;
 use std::collections::HashMap;
@@ -6,6 +5,8 @@ use serde::{Serialize, Deserialize};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use crate::types::vote::VoteType;
+use crate::types::Ballot;
 
 pub struct VoteRegistry {
     proposals: HashMap<u64, Proposal>,

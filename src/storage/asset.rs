@@ -1,7 +1,7 @@
-use crate::types::asset::AssetRecord;
+use crate::types::asset::{Asset, AssetRecord};
 use sled::Db;
 use std::error::Error;
-use crate::storage::types::{AssetId, AssetType};
+use crate::storage::types::AssetId;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
@@ -46,7 +46,7 @@ impl AssetStore {
 }
 
 pub struct AssetManager {
-    assets: Arc<RwLock<HashMap<AssetId, AssetType>>>,
+    assets: Arc<RwLock<HashMap<AssetId, Asset>>>,
 }
 
 impl AssetManager {
@@ -56,21 +56,18 @@ impl AssetManager {
         }
     }
 
-    pub async fn store_asset(&self, asset: AssetType) -> Result<(), String> {
+    pub async fn store_asset(&self, asset: Asset) -> Result<(), String> {
         let mut assets = self.assets.write().await;
-        let asset_id = AssetId::new(format!("asset_{}", assets.len()));
-        assets.insert(asset_id, asset);
+        assets.insert(asset.id.clone(), asset);
         Ok(())
     }
 
-    pub async fn get_asset(&self, asset_id: AssetId) -> Result<AssetType, String> {
+    pub async fn get_asset(&self, asset_id: AssetId) -> Result<Option<Asset>, String> {
         let assets = self.assets.read().await;
-        assets.get(&asset_id)
-            .cloned()
-            .ok_or_else(|| "Asset not found".to_string())
+        Ok(assets.get(&asset_id).cloned())
     }
 
-    pub async fn list_assets(&self) -> Vec<(AssetId, AssetType)> {
+    pub async fn list_assets(&self) -> Vec<(AssetId, Asset)> {
         let assets = self.assets.read().await;
         assets.iter()
             .map(|(id, asset)| (id.clone(), asset.clone()))

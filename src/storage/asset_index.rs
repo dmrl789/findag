@@ -1,4 +1,4 @@
-use crate::types::asset::Asset;
+use crate::types::Asset;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

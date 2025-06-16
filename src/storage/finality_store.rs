@@ -1,7 +1,7 @@
 use crate::types::finality::{FinalityVote, Justification};
 use sled::{Db, IVec};
 use serde::{Serialize, Deserialize};
-use bincode::{self, config};
+use bincode::{self, Options};
 
 pub struct FinalityStore {
     db: Db,

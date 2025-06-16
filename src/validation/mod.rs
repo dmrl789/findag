@@ -1,4 +1,12 @@
 pub mod transaction;
+pub mod handle;
+pub mod asset;
+pub mod governance;
+
+pub use transaction::*;
+pub use handle::*;
+// pub use asset::validate_asset;
+// pub use governance::validate_proposal;
 
 use thiserror::Error;
 

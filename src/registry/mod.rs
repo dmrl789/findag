@@ -2,20 +2,18 @@ pub mod domain;
 pub mod governance;
 pub mod governance_test;
 pub mod handle;
-pub mod multisig;
 pub mod reputation;
 pub mod vote;
 
-pub use handle::*;
-pub use multisig::*;
-pub use reputation::*;
-pub use vote::*;
-pub use governance::*;
-pub use domain::*;
+pub use handle::HandleRegistry;
+pub use vote::VoteRegistry;
+pub use governance::{GovernanceRegistry, GovernanceConfig};
+pub use domain::DomainRegistry;
 
 use crate::types::{
     governance::{Proposal, ProposalStatus, ProposalType},
-    vote::{Vote, VoteType},
+    VoteType,
+    Vote,
 };
 use std::collections::HashMap;
 use std::sync::RwLock;

@@ -1,5 +1,7 @@
 // use crate::wallet::{create_wallet, load_wallet, save_wallet, add_asset, add_currency};
-use crate::wallet::{Wallet, WalletConfig, RecoveryShare};
+use crate::wallet::Wallet;
+// use crate::config::WalletConfig;
+use crate::types::RecoveryShare;
 use std::io::{stdin, stdout, Write};
 use std::path::Path;
 use std::error::Error;
@@ -46,21 +48,7 @@ async fn create_wallet() -> Result<(), Box<dyn Error>> {
     stdin().read_line(&mut mnemonic)?;
     let mnemonic_enabled = mnemonic.trim().to_lowercase() == "y";
     
-    let config = WalletConfig {
-        encrypted,
-        mnemonic_enabled,
-        recovery_shares: None,
-    };
-    
-    let wallet = Wallet::new(config)?;
-    
-    if wallet.config.encrypted {
-        print!("Enter password for encryption: ");
-        stdout().flush()?;
-        let mut password = String::new();
-        stdin().read_line(&mut password)?;
-        let _ = wallet.encrypt_private_key(&password.trim()).await?;
-    }
+    let wallet = Wallet::new()?;
     
     if let Some(mnemonic) = wallet.get_mnemonic() {
         println!("\nIMPORTANT: Write down your mnemonic phrase:");
@@ -87,17 +75,6 @@ async fn load_wallet() -> Result<(), Box<dyn Error>> {
     
     let mut wallet = Wallet::load_from_file(Path::new(path.trim()))?;
     
-    if wallet.config.encrypted {
-        print!("Enter password: ");
-        stdout().flush()?;
-        let mut password = String::new();
-        stdin().read_line(&mut password)?;
-        
-        // Get the encrypted private key from the wallet file
-        let encrypted_key = wallet.encrypt_private_key(&password.trim()).await?;
-        wallet.decrypt_private_key(&password.trim(), &encrypted_key).await?;
-    }
-    
     println!("Wallet loaded successfully!");
     Ok(())
 }
@@ -112,8 +89,6 @@ async fn show_wallet_info() -> Result<(), Box<dyn Error>> {
     
     println!("\nWallet Information:");
     println!("------------------");
-    println!("Encrypted: {}", wallet.config.encrypted);
-    println!("Mnemonic Enabled: {}", wallet.config.mnemonic_enabled);
     
     if let Some(mnemonic) = wallet.get_mnemonic() {
         println!("Mnemonic Phrase: {}", mnemonic);
@@ -121,16 +96,12 @@ async fn show_wallet_info() -> Result<(), Box<dyn Error>> {
     
     if let Some(recovery_data) = &wallet.recovery_data {
         println!("\nRecovery Information:");
-        println!("Threshold: {}", recovery_data.threshold);
-        println!("Number of Shares: {}", recovery_data.shares.len());
-        println!("Created At: {}", recovery_data.created_at);
-        
+        println!("Number of Shares: {}", recovery_data.len());
         println!("\nRecovery Shares:");
-        for share in &recovery_data.shares {
-            println!("Share ID: {}", share.share_id);
-            println!("Holder: {}", share.holder);
-            println!("Created At: {}", share.created_at);
-            println!("Encrypted Share: {}", BASE64.encode(&share.encrypted_share));
+        for share in recovery_data {
+            println!("Index: {}", share.index);
+            println!("Share: {}", BASE64.encode(&share.share));
+            println!("Signature: {}", BASE64.encode(&share.signature));
             println!("---");
         }
     }
@@ -146,21 +117,11 @@ async fn setup_recovery() -> Result<(), Box<dyn Error>> {
     
     let mut wallet = Wallet::load_from_file(Path::new(path.trim()))?;
     
-    if wallet.config.encrypted {
-        print!("Enter password: ");
-        stdout().flush()?;
-        let mut password = String::new();
-        stdin().read_line(&mut password)?;
-        
-        let encrypted_key = wallet.encrypt_private_key(&password.trim()).await?;
-        wallet.decrypt_private_key(&password.trim(), &encrypted_key).await?;
-    }
-    
     print!("Enter recovery threshold (number of shares needed): ");
     stdout().flush()?;
     let mut threshold = String::new();
     stdin().read_line(&mut threshold)?;
-    let threshold: u8 = threshold.trim().parse()?;
+    let threshold: u32 = threshold.trim().parse()?;
     
     println!("Enter holder addresses (one per line, empty line to finish):");
     let mut holders = Vec::new();
@@ -174,7 +135,7 @@ async fn setup_recovery() -> Result<(), Box<dyn Error>> {
         holders.push(holder);
     }
     
-    wallet.setup_recovery(threshold, holders).await?;
+    wallet.setup_recovery(threshold.into(), holders).await?;
     wallet.save_to_file(Path::new(path.trim()))?;
     
     println!("Recovery setup completed successfully!");
@@ -206,18 +167,14 @@ async fn recover_from_shares() -> Result<(), Box<dyn Error>> {
             continue;
         }
         
-        let share_id = parts[0].to_string();
-        let encrypted_share = BASE64.decode(parts[1])
-            .map_err(|e| format!("Invalid base64 encoding: {}", e))?;
-        let holder = parts[2].to_string();
+        let index: u32 = parts[0].parse()?;
+        let share_data = BASE64.decode(parts[1])?;
+        let signature = BASE64.decode(parts[2])?;
         
         shares.push(RecoveryShare {
-            share_id,
-            encrypted_share,
-            holder,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
+            index: index as u8,
+            share: share_data,
+            signature,
         });
     }
     

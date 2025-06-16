@@ -1,8 +1,8 @@
-use crate::types::vote::{VoteType, Vote};
 use crate::types::governance::ProposalStatus;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::types::governance::{Vote, VoteChoice};
 
 #[derive(Debug, Clone)]
 pub struct Proposal {
@@ -39,9 +39,9 @@ impl Proposal {
 
     pub fn update_status(&mut self) {
         let (for_count, against_count) = self.votes.iter().fold((0, 0), |(for_c, against_c), vote| {
-            match vote.vote_type {
-                VoteType::For => (for_c + 1, against_c),
-                VoteType::Against => (for_c, against_c + 1),
+            match vote.choice {
+                VoteChoice::Yes => (for_c + 1, against_c),
+                VoteChoice::No => (for_c, against_c + 1),
                 _ => (for_c, against_c),
             }
         });
@@ -61,10 +61,10 @@ impl Proposal {
 
     pub fn get_vote_counts(&self) -> (usize, usize, usize) {
         self.votes.iter().fold((0, 0, 0), |(for_c, against_c, abstain_c), vote| {
-            match vote.vote_type {
-                VoteType::For => (for_c + 1, against_c, abstain_c),
-                VoteType::Against => (for_c, against_c + 1, abstain_c),
-                VoteType::Abstain => (for_c, against_c, abstain_c + 1),
+            match vote.choice {
+                VoteChoice::Yes => (for_c + 1, against_c, abstain_c),
+                VoteChoice::No => (for_c, against_c + 1, abstain_c),
+                VoteChoice::Abstain => (for_c, against_c, abstain_c + 1),
             }
         })
     }

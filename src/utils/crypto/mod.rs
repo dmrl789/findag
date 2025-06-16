@@ -41,6 +41,5 @@ pub mod hash;
 pub mod signature;
 pub mod encryption;
 
-pub use hash::*;
-pub use signature::*;
-pub use encryption::*; 
+pub use hash::{sha256, blake3_hash};
+pub use encryption::{generate_key, generate_nonce, encrypt, decrypt}; 

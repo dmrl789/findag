@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub struct RegisterRequest {
     pub handle: String,
     pub address: String,
+    pub role: Option<String>,
+    pub location: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -41,7 +43,7 @@ pub fn routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone 
 }
 
 async fn register(req: RegisterRequest) -> Result<impl Reply, Rejection> {
-    match register_handle(&req.handle, &req.address) {
+    match register_handle(&req.handle, &req.address, req.role, req.location) {
         Ok(_) => Ok(JsonResponse { data: Some(ResolveResponse { address: req.address }), status: StatusCode::OK.as_u16() }),
         Err(_) => Ok(JsonResponse { data: None::<ResolveResponse>, status: StatusCode::BAD_REQUEST.as_u16() }),
     }

@@ -5,6 +5,7 @@ pub fn bytes_to_ivec(bytes: &[u8]) -> IVec {
     IVec::from(bytes)
 }
 
+#[derive(Clone)]
 pub struct KVStore {
     db: Db,
 }

@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use uuid;
-use crate::types::vote::{VoteType, Ballot};
 use std::collections::HashMap;
 use std::fmt;
 

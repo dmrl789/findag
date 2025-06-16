@@ -3,7 +3,8 @@ use sled;
 use serde::{Serialize, Deserialize};
 use crate::types::{
     governance::{Proposal, ProposalStatus, ProposalType},
-    vote::{Vote, VoteType},
+    VoteType,
+    vote::Vote,
 };
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -6,18 +6,22 @@ pub struct Handle {
     pub id: String,
     pub owner: String,
     pub name: String,
+    pub role: Option<String>,
+    pub location: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub metadata: Option<Vec<u8>>,
 }
 
 impl Handle {
-    pub fn new(owner: &str, name: &str) -> Self {
+    pub fn new(owner: &str, name: &str, role: Option<String>, location: Option<String>) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             owner: owner.to_string(),
             name: name.to_string(),
+            role,
+            location,
             created_at: now,
             updated_at: now,
             metadata: None,

@@ -23,6 +23,8 @@ struct JsonResponse<T> {
 pub struct RegisterRequest {
     pub handle: String,
     pub address: String,
+    pub role: Option<String>,
+    pub location: Option<String>,
 }
 
 impl<T: Serialize + std::marker::Send> Reply for JsonResponse<T> {
@@ -37,6 +39,8 @@ pub async fn register_handle(req: RegisterRequest) -> Result<impl Reply, warp::R
         data: req.address.clone(),
         owner: req.address.clone(),
         created_at: Utc::now().timestamp_millis() as u64,
+        role: req.role,
+        location: req.location,
     };
 
     // TODO: Store record in database

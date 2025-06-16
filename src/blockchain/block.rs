@@ -1,11 +1,11 @@
 use serde::{Serialize, Deserialize};
-use crate::types::finality::Justification;
-use crate::types::transaction::Transaction;
-use crate::blockchain::block::Block;
+use crate::types::{Justification, Transaction};
 use blake3::Hash;
 use hex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use bincode;
+use crate::blockchain::error::BlockchainError;
+use std::error::Error;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BlockAnalysis {
@@ -28,9 +28,46 @@ impl Default for BlockAnalysis {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Block {
+    pub hash: Vec<u8>,
+    pub parents: Vec<Vec<u8>>,
+    pub timestamp: u64,
+    pub data: Vec<Transaction>,
+    pub signature: Vec<u8>,
+    pub justification: Option<Vec<u8>>,
+}
+
 impl Block {
-    pub async fn analyze(&mut self) -> Result<BlockAnalysis, Box<dyn std::error::Error>> {
-        Ok(BlockAnalysis::default())
+    pub fn new(id: String, content: String, parent_hash: Option<String>) -> Result<Self, BlockchainError> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| BlockchainError::TimestampError(e.to_string()))?
+            .as_secs();
+        let hash = Self::calculate_hash(&id, &content, &timestamp, &parent_hash);
+        Ok(Self {
+            hash: hash.as_bytes().to_vec(),
+            parents: vec![],
+            timestamp,
+            data: vec![],
+            signature: vec![],
+            justification: None,
+        })
+    }
+
+    pub fn calculate_hash(id: &str, content: &str, timestamp: &u64, parent_hash: &Option<String>) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(id.as_bytes());
+        hasher.update(content.as_bytes());
+        hasher.update(&timestamp.to_le_bytes());
+        if let Some(parent) = parent_hash {
+            hasher.update(parent.as_bytes());
+        }
+        hex::encode(hasher.finalize().as_bytes())
+    }
+
+    pub fn analyze(&self) -> BlockAnalysis {
+        BlockAnalysis::default()
     }
 
     pub fn get_relevance_score(&self) -> Option<f32> {
@@ -52,7 +89,7 @@ impl Block {
         hasher.finalize().as_bytes().to_vec()
     }
 
-    pub fn create(data: Vec<crate::types::transaction::Transaction>, parents: Vec<Vec<u8>>) -> Self {
+    pub fn create(data: Vec<Transaction>, parents: Vec<Vec<u8>>) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -69,5 +106,9 @@ impl Block {
         
         block.hash = block.hash();
         block
+    }
+
+    pub fn verify_hash(&self) -> bool {
+        self.hash == self.hash()
     }
 }

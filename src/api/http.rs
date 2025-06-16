@@ -39,6 +39,8 @@ async fn register_handle(
         data: address,
         created_at: chrono::Utc::now().timestamp_millis() as u64,
         owner: "system".to_string(),
+        role: None,
+        location: None,
     };
     
     match reg.lock().unwrap().register_handle(&handle, &record) {

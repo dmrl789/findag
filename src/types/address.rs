@@ -71,6 +71,14 @@ impl Address {
         };
         (address, signing_key)
     }
+
+    /// Generate a new Address with a random public key
+    pub fn generate() -> Self {
+        let mut rng = rand::thread_rng();
+        let mut public_key = [0u8; 32];
+        rng.fill_bytes(&mut public_key);
+        Self::new(public_key, None)
+    }
 }
 
 impl fmt::Display for Address {

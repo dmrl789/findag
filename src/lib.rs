@@ -11,46 +11,37 @@ pub mod storage;
 pub mod sync;
 pub mod types;
 pub mod utils;
+pub mod validation;
 pub mod vote;
 pub mod wallet;
+pub mod config;
 
 // Re-export commonly used types
 pub use types::{
-    address,
-    asset,
-    transaction,
-    round,
-    finality,
-};
-
-pub use utils::{
-    time,
-    crypto,
-};
-
-pub use blockchain::{
-    block,
-    state,
-};
-
-pub use consensus::{
-    validators,
-};
-
-pub use storage::{
-    db,
-};
-
-pub use security::{
-    audit,
-    monitoring,
-    response,
-};
-
-pub use registry::{
-    handle,
-    reputation,
-    multisig,
+    Address,
+    Asset,
+    Block,
+    FinalityVote,
+    Message,
+    RecoveryShare,
+    Transaction,
+    TxType,
+    Wallet,
+    Proposal,
+    ProposalStatus,
+    ProposalType,
+    GovernanceConfig,
+    VoteChoice,
+    Vote,
+    VoteType,
+    Ballot,
+    // Add any missing types that are actually defined in the types module
+    AddressType,
+    AssetType,
+    MessageType,
+    TransactionStatus,
+    Justification,
+    FinalityProof
 };
 
 // ✅ Correct

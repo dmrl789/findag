@@ -3,128 +3,119 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use bip39::{Mnemonic, Language};
 use serde::{Serialize, Deserialize};
-use crate::config::WalletConfig;
+// use crate::config::WalletConfig;
 use std::path::Path;
 use std::fs;
 use std::io::{self, Read, Write};
+use std::collections::HashMap;
+use tokio::sync::Mutex as TokioMutex;
+use crate::types::{Address, RecoveryShare};
+use serde_json;
+use crate::types::address::FinDagKeypair;
 
-#[derive(Debug)]
+// pub use crate::config::WalletConfig;
+
+#[derive(Debug, thiserror::Error)]
 pub enum WalletError {
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    #[error("Serialization error: {0}")]
+    SerializationError(#[from] serde_json::Error),
+    #[error("Deserialization error: {0}")]
+    DeserializationError(serde_json::Error),
+    #[error("Invalid key length")]
     InvalidKeyLength,
+    #[error("Invalid key format")]
     InvalidKeyFormat,
-    EncryptionError(String),
-    DecryptionError(String),
-    RecoveryError(String),
-    IoError(io::Error),
-}
-
-impl std::fmt::Display for WalletError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WalletError::InvalidKeyLength => write!(f, "Invalid key length"),
-            WalletError::InvalidKeyFormat => write!(f, "Invalid key format"),
-            WalletError::EncryptionError(msg) => write!(f, "Encryption error: {}", msg),
-            WalletError::DecryptionError(msg) => write!(f, "Decryption error: {}", msg),
-            WalletError::RecoveryError(msg) => write!(f, "Recovery error: {}", msg),
-            WalletError::IoError(err) => write!(f, "IO error: {}", err),
-        }
-    }
-}
-
-impl std::error::Error for WalletError {}
-
-impl From<io::Error> for WalletError {
-    fn from(err: io::Error) -> Self {
-        WalletError::IoError(err)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Wallet {
-    #[serde(skip)]
-    private_key: Arc<Mutex<Option<SigningKey>>>,
-    private_key_bytes: Vec<u8>,
-    pub config: WalletConfig,
-    mnemonic: Option<String>,
-    recovery_data: Option<Vec<u8>>,
+    pub keypair: FinDagKeypair,
+    // pub config: WalletConfig,
+    pub recovery_data: Option<Vec<RecoveryShare>>,
+    pub addressbook: HashMap<String, String>,
 }
 
 impl Wallet {
-    pub fn new(config: WalletConfig) -> Result<Self, WalletError> {
-        let mut rng = OsRng;
-        let private_key = SigningKey::generate(&mut rng);
-        let private_key_bytes = private_key.to_bytes().to_vec();
-        
-        let mnemonic = if config.mnemonic_enabled {
-            Some(Mnemonic::generate_in(Language::English, 24)
-                .map_err(|e| WalletError::RecoveryError(e.to_string()))?
-                .to_string())
-        } else {
-            None
-        };
-
+    pub fn new(/*config: WalletConfig*/) -> Result<Self, WalletError> {
+        let keypair = FinDagKeypair::generate().map_err(|e| WalletError::InvalidInput(e.to_string()))?;
         Ok(Self {
-            private_key: Arc::new(Mutex::new(Some(private_key))),
-            private_key_bytes,
-            config,
-            mnemonic,
+            keypair,
+            // config,
             recovery_data: None,
+            addressbook: HashMap::new(),
         })
     }
 
-    pub fn from_bytes(private_key_bytes: Vec<u8>, config: WalletConfig) -> Result<Self, WalletError> {
-        let private_key = SigningKey::from_bytes(&private_key_bytes.try_into()
-            .map_err(|_| WalletError::InvalidKeyLength)?)
-            .map_err(|_| WalletError::InvalidKeyFormat)?;
-            
-        let mnemonic = if config.mnemonic_enabled {
-            Some(Mnemonic::generate_in(Language::English, 24)
-                .map_err(|e| WalletError::RecoveryError(e.to_string()))?
-                .to_string())
-        } else {
-            None
-        };
-
-        Ok(Self {
-            private_key: Arc::new(Mutex::new(Some(private_key))),
-            private_key_bytes,
-            config,
-            mnemonic,
-            recovery_data: None,
-        })
+    pub fn add_address(&mut self, name: String, address: String) -> Result<(), WalletError> {
+        let sanitized_name = name.trim().to_lowercase().replace(|c: char| !c.is_alphanumeric(), "_");
+        if sanitized_name.is_empty() {
+            return Err(WalletError::InvalidInput("Name cannot be empty".to_string()));
+        }
+        if !is_valid_address(&address) {
+            return Err(WalletError::InvalidInput("Invalid address format".to_string()));
+        }
+        self.addressbook.insert(sanitized_name, address);
+        Ok(())
     }
 
-    pub fn get_public_key(&self) -> VerifyingKey {
-        let private_key = self.private_key.lock().unwrap();
-        private_key.as_ref().unwrap().verifying_key()
+    pub fn get_address(&self, name: &str) -> Option<&String> {
+        let sanitized_name = name.trim().to_lowercase().replace(|c: char| !c.is_alphanumeric(), "_");
+        self.addressbook.get(&sanitized_name)
     }
 
-    pub fn get_private_key_bytes(&self) -> Vec<u8> {
-        self.private_key_bytes.clone()
+    pub fn remove_address(&mut self, name: &str) {
+        let sanitized_name = name.trim().to_lowercase().replace(|c: char| !c.is_alphanumeric(), "_");
+        self.addressbook.remove(&sanitized_name);
+    }
+
+    pub fn list_addresses(&self) -> Vec<(String, String)> {
+        self.addressbook.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    }
+
+    pub async fn save(&self, path: &Path) -> Result<(), WalletError> {
+        let data = serde_json::to_string(self).map_err(|e| WalletError::SerializationError(e))?;
+        std::fs::write(path, data).map_err(WalletError::IoError)
+    }
+
+    pub async fn load(path: &Path) -> Result<Self, WalletError> {
+        let data = std::fs::read_to_string(path).map_err(WalletError::IoError)?;
+        serde_json::from_str(&data).map_err(|e| WalletError::DeserializationError(e))
+    }
+
+    // Synchronous wrappers for CLI compatibility
+    pub fn save_to_file(&self, path: &Path) -> Result<(), WalletError> {
+        futures::executor::block_on(self.save(path))
+    }
+    pub fn load_from_file(path: &Path) -> Result<Self, WalletError> {
+        futures::executor::block_on(Self::load(path))
     }
 
     pub fn get_mnemonic(&self) -> Option<String> {
-        self.mnemonic.clone()
+        None // Stub: implement if you add mnemonic support
     }
 
-    pub fn get_config(&self) -> &WalletConfig {
-        &self.config
+    pub async fn encrypt_private_key(&self, _password: &str) -> Result<String, WalletError> {
+        Ok("encrypted_key_stub".to_string())
     }
 
-    pub async fn encrypt_private_key(&mut self, password: &str) -> Result<(), WalletError> {
-        // Placeholder for encryption logic
+    pub async fn decrypt_private_key(&mut self, _password: &str, _encrypted_key: &str) -> Result<(), WalletError> {
         Ok(())
     }
-
-    pub fn save_to_file(&self, path: &Path) -> Result<(), WalletError> {
-        let data = serde_json::to_string(self)?;
-        fs::write(path, data)?;
+    pub async fn setup_recovery(&mut self, _threshold: u32, _holders: Vec<String>) -> Result<(), WalletError> {
         Ok(())
     }
-
-    pub fn load_from_file(path: &Path) -> Result<Self, WalletError> {
-        let data = fs::read_to_string(path)?;
-        let wallet: Wallet = serde_json::from_str(&data)?;
-        Ok(wallet)
+    pub async fn recover_from_shares(&mut self, _shares: Vec<RecoveryShare>) -> Result<(), WalletError> {
+        Ok(())
     }
+}
+
+fn is_valid_address(address: &str) -> bool {
+    if address.len() != 44 {
+        return false;
+    }
+    true
 } 

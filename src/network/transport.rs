@@ -1,10 +1,10 @@
 use crate::{
-    network::message::Message,
     storage::types::PeerId,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
+use crate::types::Message;
 
 pub struct TransportManager {
     connections: Arc<RwLock<HashMap<PeerId, String>>>,

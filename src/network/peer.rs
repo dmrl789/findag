@@ -1,14 +1,15 @@
 use crate::{
     network::{
         discovery::DiscoveryManager,
-        message::{Message, MessageType},
         transport::TransportManager,
     },
     storage::{
         asset::AssetManager,
-        types::{AssetId, AssetType, PeerId},
+        types::{AssetId, PeerId},
     },
     utils::crypto::signature::SignatureManager,
+    types::asset::AssetType,
+    types::message::{Message, MessageType},
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -78,8 +79,8 @@ impl Peer {
         payload: String,
     ) -> Result<(), String> {
         let message = Message {
-            sender: self.id.clone(),
-            recipient: peer_id.clone(),
+            sender: self.id.to_string(),
+            recipient: peer_id.to_string(),
             message_type,
             payload,
             timestamp: chrono::Utc::now(),
@@ -91,16 +92,14 @@ impl Peer {
     pub async fn handle_message(&self, message: Message) -> Result<(), String> {
         match message.message_type {
             MessageType::AssetBroadcast => {
-                let asset_id = AssetId::from_str(&message.payload)
-                    .map_err(|_| "Invalid asset ID".to_string())?;
+                let asset_id = message.payload.clone();
                 self.asset_manager.get_asset(asset_id).await?;
             }
             MessageType::AssetRequest => {
-                let asset_id = AssetId::from_str(&message.payload)
-                    .map_err(|_| "Invalid asset ID".to_string())?;
+                let asset_id = message.payload.clone();
                 if let Ok(asset) = self.asset_manager.get_asset(asset_id).await {
                     self.send_message(
-                        message.sender,
+                        PeerId::from_str(&message.sender).map_err(|_| "Invalid peer ID".to_string())?,
                         MessageType::AssetResponse,
                         serde_json::to_string(&asset).map_err(|e| e.to_string())?,
                     )
@@ -108,7 +107,7 @@ impl Peer {
                 }
             }
             MessageType::AssetResponse => {
-                let asset: AssetType = serde_json::from_str(&message.payload)
+                let asset: crate::types::asset::Asset = serde_json::from_str(&message.payload)
                     .map_err(|e| e.to_string())?;
                 self.asset_manager.store_asset(asset).await?;
             }

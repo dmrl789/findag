@@ -1,9 +1,4 @@
 use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum AssetType {
-    Token,
-    NFT,
-    Document,
-    Custom(String),
-} 
+pub type AssetId = String;
+pub use libp2p::PeerId; 

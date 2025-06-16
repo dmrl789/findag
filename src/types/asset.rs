@@ -2,6 +2,7 @@ use std::error::Error;
 use serde::{Deserialize, Serialize};
 use chrono;
 use serde_json;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AssetType {
@@ -11,13 +12,14 @@ pub enum AssetType {
     Custom(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Asset {
     pub id: String,
     pub name: String,
     pub description: String,
     pub owner: String,
-    pub metadata: serde_json::Value,
+    pub issuer: String,
+    pub metadata: HashMap<String, String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -37,7 +39,8 @@ impl Asset {
         name: String,
         description: String,
         owner: String,
-        metadata: serde_json::Value,
+        issuer: String,
+        metadata: HashMap<String, String>,
     ) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
@@ -45,13 +48,14 @@ impl Asset {
             name,
             description,
             owner,
+            issuer,
             metadata,
             created_at: now,
             updated_at: now,
         }
     }
 
-    pub fn update(&mut self, name: Option<String>, description: Option<String>, metadata: Option<serde_json::Value>) {
+    pub fn update(&mut self, name: Option<String>, description: Option<String>, metadata: Option<HashMap<String, String>>) {
         if let Some(name) = name {
             self.name = name;
         }

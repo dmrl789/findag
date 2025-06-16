@@ -8,12 +8,14 @@ lazy_static::lazy_static! {
     static ref REGISTRY: HandleRegistry = HandleRegistry::new("handles.db");
 }
 
-pub fn register_handle(handle: &str, address: &str) -> Result<(), String> {
+pub fn register_handle(handle: &str, address: &str, role: Option<String>, location: Option<String>) -> Result<(), String> {
     let record = HandleRecord {
         id: handle.to_string(),
         data: address.to_string(),
         owner: "system".to_string(),
         created_at: Utc::now().timestamp() as u64,
+        role,
+        location,
     };
     REGISTRY.register_handle(handle, &record)
 }
@@ -31,6 +33,8 @@ pub struct HandleRecord {
     pub data: String,
     pub owner: String,
     pub created_at: u64,
+    pub role: Option<String>,
+    pub location: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
