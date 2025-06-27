@@ -5,6 +5,7 @@ use tokio::sync::mpsc;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use crate::metrics;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum GossipMsg {
@@ -22,6 +23,7 @@ pub struct NetworkPropagator {
 impl NetworkPropagator {
     pub async fn new(bind_addr: &str, peers: Vec<SocketAddr>) -> std::io::Result<Self> {
         let socket = UdpSocket::bind(bind_addr).await?;
+        metrics::PEER_COUNT.set(peers.len() as i64);
         Ok(Self {
             socket: Arc::new(socket),
             peers,

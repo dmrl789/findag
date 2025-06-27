@@ -1,6 +1,8 @@
-use crate::core::types::Transaction;
+use crate::core::types::{Transaction, SUPPORTED_ASSETS};
 use std::collections::{HashMap, BTreeMap};
 use std::sync::{Arc, Mutex};
+use storage::state::StateDB;
+use crate::metrics;
 
 const SHARD_COUNT: usize = 16;
 
@@ -14,21 +16,36 @@ pub struct TxPool {
     // FinDAG Time -> set of transaction hashes (for prioritization)
     pub time_index: BTreeMap<u64, Vec<[u8; 32]>>,
     pub max_size: usize,
+    pub state_db: Arc<StateDB>,
+    pub asset_whitelist: Arc<Mutex<Vec<String>>>,
 }
 
 impl TxPool {
-    pub fn new(max_size: usize) -> Self {
+    pub fn new(max_size: usize, state_db: Arc<StateDB>, asset_whitelist: Arc<Mutex<Vec<String>>>) -> Self {
         Self {
             transactions: HashMap::new(),
             time_index: BTreeMap::new(),
             max_size,
+            state_db,
+            asset_whitelist,
         }
     }
 
     /// Add a new transaction to the pool. Returns true if added.
     pub fn add_transaction(&mut self, tx: Transaction) -> bool {
+        // Cross-shard transaction protocol (scaffold)
+        if let (Some(source), Some(dest)) = (tx.source_shard, tx.dest_shard) {
+            // TODO: Implement two-phase commit for cross-shard txs
+            // Phase 1: Lock/prepare on source shard
+            // Phase 2: Commit/acknowledge on destination shard
+            // Finalize and update state on both shards
+            println!("[TxPool] Received cross-shard tx: {:?} -> {:?}", source, dest);
+            // For now, reject or queue cross-shard txs
+            return false;
+        }
         let tx_hash = tx.hashtimer; // Or use a real tx hash if available
         if self.transactions.contains_key(&tx_hash) {
+            metrics::ERROR_COUNT.with_label_values(&["duplicate_tx"]).inc();
             return false; // Duplicate
         }
         if self.transactions.len() >= self.max_size {
@@ -42,14 +59,37 @@ impl TxPool {
                 }
             }
         }
+        // Enforce dynamic asset whitelist
+        let asset = tx.currency.as_str();
+        let whitelist = self.asset_whitelist.lock().unwrap();
+        if !whitelist.contains(&asset.to_string()) {
+            println!("[TxPool] Rejected tx: unsupported asset '{}'.", asset);
+            metrics::ERROR_COUNT.with_label_values(&["unsupported_asset"]).inc();
+            return false;
+        }
+        // Check sender balance before adding
+        let from = tx.from.as_str();
+        let amount = tx.amount;
+        let bal = self.state_db.get_balance(tx.shard_id.0, from, asset);
+        if bal < amount {
+            println!("[TxPool] Rejected tx: insufficient funds for {} ({} {})", from, amount, asset);
+            metrics::ERROR_COUNT.with_label_values(&["insufficient_funds"]).inc();
+            return false;
+        }
         self.time_index.entry(tx.findag_time).or_default().push(tx_hash);
-        self.transactions.insert(tx_hash, tx);
-        true
+        let added = self.transactions.insert(tx_hash, tx).is_none();
+        if added {
+            metrics::MEMPOOL_SIZE.set(self.transactions.len() as i64);
+        }
+        added
     }
 
     /// Remove a transaction (e.g., after block inclusion)
     pub fn remove_transaction(&mut self, tx_hash: &[u8; 32], findag_time: u64) {
-        self.transactions.remove(tx_hash);
+        let removed = self.transactions.remove(tx_hash).is_some();
+        if removed {
+            metrics::MEMPOOL_SIZE.set(self.transactions.len() as i64);
+        }
         if let Some(hashes) = self.time_index.get_mut(&findag_time) {
             hashes.retain(|h| h != tx_hash);
             if hashes.is_empty() {
@@ -83,42 +123,45 @@ impl TxPool {
 /// Sharded, in-RAM transaction pool for high throughput
 pub struct ShardedTxPool {
     shards: Vec<Mutex<TxPool>>,
+    shard_count: usize,
 }
 
 impl ShardedTxPool {
-    pub fn new(max_size_per_shard: usize) -> Self {
-        let mut shards = Vec::with_capacity(SHARD_COUNT);
-        for _ in 0..SHARD_COUNT {
-            shards.push(Mutex::new(TxPool::new(max_size_per_shard)));
+    pub fn new_with_whitelist_per_shard(max_size_per_shard: usize, asset_whitelist: Arc<Mutex<Vec<String>>>, shard_count: usize) -> Self {
+        let mut shards = Vec::with_capacity(shard_count);
+        let state_db = Arc::new(StateDB::default()); // TODO: Pass real state_db if needed
+        for _ in 0..shard_count {
+            shards.push(Mutex::new(TxPool::new(max_size_per_shard, state_db.clone(), asset_whitelist.clone())));
         }
-        Self { shards }
+        Self { shards, shard_count }
     }
-    fn shard_for(&self, tx_hash: &[u8; 32]) -> usize {
-        (tx_hash[0] as usize) % SHARD_COUNT
+    /// Route by tx.shard_id (single-shard mode: always 0)
+    fn shard_for_id(&self, shard_id: u16) -> usize {
+        (shard_id as usize) % self.shard_count
     }
     pub fn add_transaction(&self, tx: Transaction) -> bool {
-        let shard = self.shard_for(&tx.hashtimer);
+        let shard = self.shard_for_id(tx.shard_id.0);
         self.shards[shard].lock().unwrap().add_transaction(tx)
     }
-    pub fn remove_transaction(&self, tx_hash: &[u8; 32], findag_time: u64) {
-        let shard = self.shard_for(tx_hash);
+    pub fn remove_transaction(&self, tx_hash: &[u8; 32], findag_time: u64, shard_id: u16) {
+        let shard = self.shard_for_id(shard_id);
         self.shards[shard].lock().unwrap().remove_transaction(tx_hash, findag_time);
     }
-    pub fn get_transactions(&self, limit: usize) -> Vec<Transaction> {
-        // Collect up to 'limit' transactions from all shards, oldest first
-        let mut all_txs = Vec::new();
-        for shard in &self.shards {
-            let shard_txs = shard.lock().unwrap().get_transactions(limit);
-            for tx in shard_txs {
-                all_txs.push(tx.clone());
-                if all_txs.len() == limit {
-                    return all_txs;
-                }
+    pub fn get_transactions(&self, limit: usize, shard_id: u16) -> Vec<Transaction> {
+        let mut txs = Vec::new();
+        let shard = self.shard_for_id(shard_id);
+        let shard_txs = self.shards[shard].lock().unwrap().get_transactions(limit);
+        for tx in shard_txs {
+            txs.push(tx.clone());
+            if txs.len() == limit {
+                break;
             }
         }
-        all_txs
+        txs
     }
-    pub fn size(&self) -> usize {
-        self.shards.iter().map(|s| s.lock().unwrap().size()).sum()
+    pub fn size(&self, shard_id: u16) -> usize {
+        let shard = self.shard_for_id(shard_id);
+        self.shards[shard].lock().unwrap().size()
     }
+    // For future: add multi-shard aggregation methods
 } 

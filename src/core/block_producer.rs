@@ -3,6 +3,7 @@ use crate::core::dag_engine::DagEngine;
 use crate::core::tx_pool::ShardedTxPool;
 use crate::core::address::Address;
 use ed25519_dalek::{Keypair, Signer};
+use storage::state::StateDB;
 
 /// Block production logic for FinDAG
 pub struct BlockProducer<'a> {
@@ -11,18 +12,34 @@ pub struct BlockProducer<'a> {
     pub proposer: Address,
     pub keypair: &'a Keypair,
     pub max_block_txs: usize,
+    pub state_db: &'a StateDB,
+    pub shard_id: u16,
 }
 
 impl<'a> BlockProducer<'a> {
     /// Produce a new block from the transaction pool and insert into the DAG
     pub fn produce_block(&mut self, parent_blocks: Vec<[u8; 32]>, findag_time: u64, hashtimer: [u8; 32]) -> Option<Block> {
-        // Fetch transactions from the pool
-        let txs = self.tx_pool.get_transactions(self.max_block_txs);
+        // Fetch transactions from the pool for this shard
+        let txs = self.tx_pool.get_transactions(self.max_block_txs, self.shard_id);
         if txs.is_empty() {
             return None; // Skip-when-empty
         }
-        // Clone transactions for block
-        let block_txs: Vec<Transaction> = txs.iter().cloned().collect();
+        // Validate and apply transactions to state
+        let mut block_txs: Vec<Transaction> = Vec::new();
+        for tx in txs.iter().cloned() {
+            let from = tx.from.as_str();
+            let to = tx.to.as_str();
+            let asset = tx.currency.as_str();
+            let amount = tx.amount;
+            if self.state_db.transfer(self.shard_id, from, to, asset, amount) {
+                block_txs.push(tx);
+            } else {
+                println!("[BlockProducer] Skipped tx: insufficient funds for {} ({} {})", from, amount, asset);
+            }
+        }
+        if block_txs.is_empty() {
+            return None;
+        }
         // Compute block_id (hash of contents, simplified here)
         let mut hasher = sha2::Sha256::new();
         for tx in &block_txs {
@@ -51,9 +68,9 @@ impl<'a> BlockProducer<'a> {
         };
         // Insert block into DAG
         self.dag.add_block(block.clone());
-        // Remove included transactions from the pool
+        // Remove included transactions from the pool for this shard
         for tx in &block_txs {
-            self.tx_pool.remove_transaction(&tx.hashtimer, tx.findag_time);
+            self.tx_pool.remove_transaction(&tx.hashtimer, tx.findag_time, self.shard_id);
         }
         Some(block)
     }

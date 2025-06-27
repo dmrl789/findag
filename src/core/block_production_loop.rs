@@ -6,8 +6,12 @@ use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
 use crate::dagtimer::hashtimer::compute_hashtimer;
 use ed25519_dalek::Keypair;
 use tokio::time::{sleep, Duration};
+use storage::persistent::PersistMsg;
+use tokio::sync::mpsc::UnboundedSender;
+use crate::metrics;
+use std::time::Instant;
 
-/// Runs the block production loop at the given interval (ms)
+/// Runs the block production loop for a specific shard
 pub async fn run_block_production_loop(
     dag: &mut DagEngine,
     tx_pool: &ShardedTxPool,
@@ -16,6 +20,9 @@ pub async fn run_block_production_loop(
     max_block_txs: usize,
     interval_ms: u64,
     time_manager: &FinDAGTimeManager,
+    persist_tx: UnboundedSender<PersistMsg>,
+    shard_id: u16,
+    round_finalizer: crate::consensus::round_finalizer::RoundFinalizer<'_>,
 ) {
     let mut block_producer = BlockProducer {
         dag,
@@ -23,9 +30,11 @@ pub async fn run_block_production_loop(
         proposer,
         keypair,
         max_block_txs,
+        shard_id,
     };
     loop {
-        // Set parent_blocks from current DAG tips
+        let block_start = Instant::now();
+        // Set parent_blocks from current DAG tips (per-shard in future)
         let parent_blocks = block_producer.dag.block_tips().iter().map(|b| b.block_id).collect();
         // Get real FinDAG Time
         let findag_time = time_manager.get_findag_time();
@@ -36,9 +45,22 @@ pub async fn run_block_production_loop(
         }
         let nonce = 0u32; // You may want to increment or randomize this
         let hashtimer = compute_hashtimer(findag_time, &block_content, nonce);
+        // Only fetch transactions for this shard
         let produced = block_producer.produce_block(parent_blocks, findag_time, hashtimer);
         if let Some(block) = produced {
-            println!("Produced block: {:?} at FinDAG Time {}", block.block_id, findag_time);
+            println!("[Shard {}] Produced block: {:?} at FinDAG Time {}", shard_id, block.block_id, findag_time);
+            // TODO: Use round_finalizer for consensus/finality in this shard
+            // Persist the block asynchronously
+            let _ = persist_tx.send(PersistMsg::Block(block.clone()));
+            // --- Metrics instrumentation ---
+            metrics::BLOCK_TOTAL.inc();
+            metrics::BLOCKS_PER_SEC.inc();
+            metrics::TPS.set(block.transactions.len() as i64);
+            metrics::TX_TOTAL.inc_by(block.transactions.len() as u64);
+            metrics::BLOCK_LATENCY.observe(block_start.elapsed().as_secs_f64());
+            for tx in &block.transactions {
+                metrics::PER_ASSET_TPS.with_label_values(&[&tx.currency]).inc();
+            }
         }
         sleep(Duration::from_millis(interval_ms)).await;
     }

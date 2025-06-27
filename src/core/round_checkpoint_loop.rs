@@ -6,6 +6,8 @@ use crate::dagtimer::hashtimer::compute_hashtimer;
 use ed25519_dalek::{Keypair, Signer};
 use tokio::time::{sleep, Duration};
 use std::collections::HashSet;
+use storage::persistent::PersistMsg;
+use tokio::sync::mpsc::UnboundedSender;
 
 /// Runs the round checkpointing loop at the given interval (ms)
 pub async fn run_round_checkpoint_loop(
@@ -14,6 +16,7 @@ pub async fn run_round_checkpoint_loop(
     keypair: &Keypair,
     interval_ms: u64,
     time_manager: &FinDAGTimeManager,
+    persist_tx: UnboundedSender<PersistMsg>,
 ) {
     let mut last_round_id = 0u64;
     let mut last_block_set: HashSet<[u8; 32]> = HashSet::new();
@@ -53,10 +56,12 @@ pub async fn run_round_checkpoint_loop(
                 signature,
                 public_key,
             };
-            dag.add_round(round);
+            dag.add_round(round.clone());
             last_round_id = round_id;
             last_block_set.extend(new_block_ids);
             println!("Created round checkpoint: {} with {} blocks", round_id, last_block_set.len());
+            // Persist the round asynchronously
+            let _ = persist_tx.send(PersistMsg::Round(round));
         }
         sleep(Duration::from_millis(interval_ms)).await;
     }

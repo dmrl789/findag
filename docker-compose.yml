@@ -1,0 +1,36 @@
+version: '3.8'
+services:
+  findag-node1:
+    build: .
+    container_name: findag-node1
+    ports:
+      - "8081:8080"
+      - "9891:9898"
+      - "9001:9000"
+    environment:
+      - NODE_ID=1
+      - PEERS=172.20.0.3:9002
+    networks:
+      findag-net:
+        ipv4_address: 172.20.0.2
+
+  findag-node2:
+    build: .
+    container_name: findag-node2
+    ports:
+      - "8082:8080"
+      - "9892:9898"
+      - "9002:9000"
+    environment:
+      - NODE_ID=2
+      - PEERS=172.20.0.2:9001
+    networks:
+      findag-net:
+        ipv4_address: 172.20.0.3
+
+networks:
+  findag-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 

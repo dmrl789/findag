@@ -3,6 +3,7 @@
 
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer};
 use std::collections::HashMap;
+use crate::consensus::validator_set::{ValidatorSet, ValidatorInfo, ValidatorStatus};
 
 /// Represents a validator in the network
 #[derive(Clone, Debug)]
@@ -12,9 +13,8 @@ pub struct Validator {
 }
 
 /// Manages validator assignments and signing
-pub struct RoundFinalizer {
-    pub validators: Vec<Validator>,
-    pub validator_index: HashMap<String, usize>,
+pub struct RoundFinalizer<'a> {
+    pub validator_set: &'a ValidatorSet,
     pub local_keypair: Keypair,
 }
 
@@ -26,26 +26,21 @@ pub struct RoundCommitment {
     pub signature: Signature,
 }
 
-impl RoundFinalizer {
-    pub fn new(validators: Vec<Validator>, local_keypair: Keypair) -> Self {
-        let validator_index = validators
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (v.id.clone(), i))
-            .collect();
-
+impl<'a> RoundFinalizer<'a> {
+    pub fn new(validator_set: &'a ValidatorSet, local_keypair: Keypair) -> Self {
         Self {
-            validators,
-            validator_index,
+            validator_set,
             local_keypair,
         }
     }
 
     /// Determine if local node is the finalizer for a given round
     pub fn is_finalizer_for_round(&self, round_number: u64) -> bool {
-        let assigned_index = (round_number as usize) % self.validators.len();
+        let active_validators = self.validator_set.active_validators();
+        if active_validators.is_empty() { return false; }
+        let assigned_index = (round_number as usize) % active_validators.len();
         let local_id = self.local_id();
-        self.validators[assigned_index].id == local_id
+        active_validators[assigned_index].address.as_str() == local_id
     }
 
     /// Produce a signed round commitment if this node is the assigned finalizer
@@ -53,10 +48,8 @@ impl RoundFinalizer {
         if !self.is_finalizer_for_round(round_number) {
             return None;
         }
-
         let message = Self::build_message(round_number, &hash);
         let signature = self.local_keypair.sign(&message);
-
         Some(RoundCommitment {
             round_number,
             finalized_hash: hash,
@@ -72,23 +65,27 @@ impl RoundFinalizer {
     }
 
     pub fn local_id(&self) -> String {
-        // Can be BLAKE2b or base64-encoded public key
-        base64::encode(self.local_keypair.public.as_bytes())
+        // Use address string as ID
+        let address = crate::core::address::Address::from_public_key(&self.local_keypair.public);
+        address.as_str().to_string()
     }
 
     /// Verify a signed round commitment
     pub fn verify_commitment(&self, commitment: &RoundCommitment) -> bool {
         let message = Self::build_message(commitment.round_number, &commitment.finalized_hash);
-
-        self.validator_index
-            .get(&commitment.signer_id)
-            .and_then(|&i| {
-                self.validators
-                    .get(i)
-                    .map(|v| v.public_key.verify_strict(&message, &commitment.signature).is_ok())
-            })
-            .unwrap_or(false)
+        if let Some(validator) = self.validator_set.get_validator(&commitment.signer_id) {
+            if validator.status == ValidatorStatus::Active {
+                return validator.public_key.verify_strict(&message, &commitment.signature).is_ok();
+            }
+        }
+        false
     }
+
+    /// Cross-shard consensus protocol (scaffold)
+    /// TODO: Implement cross-shard transaction finality and receipt handling
+    /// - Coordinate with other shards for atomic commit
+    /// - Track and verify cross-shard receipts
+    /// - Ensure both shards reach consensus on the transaction outcome
 }
 
 #[cfg(test)]

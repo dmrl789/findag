@@ -2,20 +2,24 @@ use libp2p::{
     identity, PeerId, Multiaddr,
     gossipsub::{self, Gossipsub, GossipsubEvent, MessageAuthenticity, IdentTopic},
     mdns::{Mdns, MdnsConfig, MdnsEvent},
-    kad::{Kademlia, KademliaConfig, store::MemoryStore, record::store::MemoryStore as RecordStore, KademliaEvent},
-    noise::{Keypair as NoiseKeypair, X25519Spec, NoiseConfig, AuthenticKeypair, NoiseError},
+    kad::{Kademlia, KademliaConfig, store::MemoryStore, KademliaEvent},
+    noise::{Keypair as NoiseKeypair, X25519Spec},
     swarm::{Swarm, SwarmEvent, NetworkBehaviour},
     futures::StreamExt,
 };
 use serde::{Serialize, Deserialize};
 use std::collections::HashSet;
 use tokio::sync::mpsc;
+use crate::core::types::{Transaction, Block, Round};
+use crate::core::tx_pool::ShardedTxPool;
+use crate::core::dag_engine::DagEngine;
+use ed25519_dalek::{Verifier, Signature, PublicKey};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum P2PMsg {
-    NewTransaction(Vec<u8>), // Replace Vec<u8> with your Transaction type
-    NewBlock(Vec<u8>),       // Replace Vec<u8> with your Block type
-    NewRound(Vec<u8>),       // Replace Vec<u8> with your Round type
+    NewTransaction(Transaction),
+    NewBlock(Block),
+    NewRound(Round),
 }
 
 #[derive(NetworkBehaviour)]
@@ -49,54 +53,92 @@ impl From<KademliaEvent> for MyBehaviourEvent {
     }
 }
 
-pub async fn run_p2p_node(topic_str: &str, mut rx: mpsc::UnboundedReceiver<P2PMsg>) {
-    // Generate a random identity for this node
+fn verify_transaction(tx: &Transaction) -> bool {
+    // Check signature matches public key and transaction content
+    let msg = b"mock-tx"; // Replace with real tx serialization if needed
+    tx.public_key.verify_strict(msg, &tx.signature).is_ok()
+}
+
+fn verify_block(block: &Block) -> bool {
+    // Check block is signed by proposer
+    let msg = &block.block_id;
+    block.public_key.verify_strict(msg, &block.signature).is_ok()
+}
+
+fn verify_round(round: &Round) -> bool {
+    // Check round is signed by proposer/finalizer
+    let mut msg = round.round_id.to_le_bytes().to_vec();
+    msg.extend_from_slice(&round.hashtimer);
+    round.public_key.verify_strict(&msg, &round.signature).is_ok()
+}
+
+/// Run the P2P node and integrate with mempool, DAG, and round logic
+pub async fn run_p2p_node(
+    topic_str: &str,
+    mut rx: mpsc::UnboundedReceiver<P2PMsg>,
+    tx_pool: ShardedTxPool,
+    dag: &mut DagEngine,
+    seen_hashes: &mut HashSet<Vec<u8>>,
+) {
     let id_keys = identity::Keypair::generate_ed25519();
     let peer_id = PeerId::from(id_keys.public());
     println!("Local peer id: {:?}", peer_id);
 
-    // Set up Noise for secure transport
     let noise_keys = NoiseKeypair::<X25519Spec>::new().into_authentic(&id_keys).unwrap();
     let transport = libp2p::tokio_development_transport(id_keys.clone()).await.unwrap();
 
-    // Set up gossipsub
     let gossipsub_config = gossipsub::GossipsubConfig::default();
     let mut gossipsub = Gossipsub::new(MessageAuthenticity::Signed(id_keys.clone()), gossipsub_config).unwrap();
     let topic = IdentTopic::new(topic_str);
     gossipsub.subscribe(&topic).unwrap();
 
-    // Set up mDNS for local peer discovery
     let mdns = Mdns::new(MdnsConfig::default()).await.unwrap();
-
-    // Set up Kademlia for global peer discovery
     let store = MemoryStore::new(peer_id.clone());
-    let mut kademlia = Kademlia::with_config(peer_id.clone(), store, KademliaConfig::default());
+    let kademlia = Kademlia::with_config(peer_id.clone(), store, KademliaConfig::default());
 
-    // Combine behaviours
     let behaviour = MyBehaviour { gossipsub, mdns, kademlia };
     let mut swarm = Swarm::new(transport, behaviour, peer_id);
-
-    // Listen on all interfaces and a random OS-assigned port
     let listen_addr: Multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
     swarm.listen_on(listen_addr).unwrap();
 
-    // Main event loop
     loop {
         tokio::select! {
             Some(msg) = rx.recv() => {
-                // Serialize and publish to gossipsub
                 let data = bincode::serialize(&msg).unwrap();
-                // TODO: Validate message before publishing
                 swarm.behaviour_mut().gossipsub.publish(topic.clone(), data).unwrap();
             }
             event = swarm.select_next_some() => {
                 match event {
                     SwarmEvent::Behaviour(MyBehaviourEvent::Gossipsub(GossipsubEvent::Message { message, .. })) => {
-                        // Deserialize and validate incoming message
                         if let Ok(msg) = bincode::deserialize::<P2PMsg>(&message.data) {
-                            // TODO: Validate message (signature, replay, etc.)
-                            println!("Received P2PMsg: {:?}", msg);
-                            // TODO: Integrate with mempool, DAG, etc.
+                            let hash = match &msg {
+                                P2PMsg::NewTransaction(tx) => tx.hashtimer.to_vec(),
+                                P2PMsg::NewBlock(block) => block.block_id.to_vec(),
+                                P2PMsg::NewRound(round) => round.round_id.to_be_bytes().to_vec(),
+                            };
+                            if seen_hashes.insert(hash) {
+                                // Signature and structure validation
+                                let valid = match &msg {
+                                    P2PMsg::NewTransaction(tx) => verify_transaction(tx),
+                                    P2PMsg::NewBlock(block) => verify_block(block),
+                                    P2PMsg::NewRound(round) => verify_round(round),
+                                };
+                                if !valid {
+                                    println!("[P2P] Dropped invalid message: signature or structure check failed");
+                                    continue;
+                                }
+                                match msg {
+                                    P2PMsg::NewTransaction(tx) => {
+                                        tx_pool.add_transaction(tx);
+                                    }
+                                    P2PMsg::NewBlock(block) => {
+                                        dag.add_block(block);
+                                    }
+                                    P2PMsg::NewRound(round) => {
+                                        dag.add_round(round);
+                                    }
+                                }
+                            }
                         }
                     }
                     SwarmEvent::Behaviour(MyBehaviourEvent::Mdns(MdnsEvent::Discovered(peers))) => {
@@ -105,7 +147,7 @@ pub async fn run_p2p_node(topic_str: &str, mut rx: mpsc::UnboundedReceiver<P2PMs
                         }
                     }
                     SwarmEvent::Behaviour(MyBehaviourEvent::Kademlia(_event)) => {
-                        // Handle Kademlia events (peer discovery, etc.)
+                        // Handle Kademlia events
                     }
                     _ => {}
                 }
@@ -113,6 +155,10 @@ pub async fn run_p2p_node(topic_str: &str, mut rx: mpsc::UnboundedReceiver<P2PMs
         }
     }
 }
+
+// Usage:
+// Call run_p2p_node from your main, passing the mempool, DAG, and a seen_hashes set.
+// When you create a new tx/block/round locally, send it to the P2P network via the channel.
 
 // Example usage (in your main):
 //

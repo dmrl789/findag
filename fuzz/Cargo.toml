@@ -1,0 +1,15 @@
+[[bin]]
+name = "fuzz_transaction"
+path = "fuzz_targets/fuzz_transaction.rs"
+
+[[bin]]
+name = "fuzz_block"
+path = "fuzz_targets/fuzz_block.rs"
+
+[[bin]]
+name = "fuzz_round"
+path = "fuzz_targets/fuzz_round.rs"
+
+[[bin]]
+name = "fuzz_api_transaction"
+path = "fuzz_targets/fuzz_api_transaction.rs" 
