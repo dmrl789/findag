@@ -1,9 +1,9 @@
 use serde::{Serialize, Deserialize};
 use tokio::net::UdpSocket;
-use tokio::time::{timeout, sleep, Duration, Instant};
 use std::net::SocketAddr;
+use tokio::time::{timeout, sleep, Duration};
 use std::sync::Arc;
-use rand::Rng;
+use rand07::Rng;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PingPongMsg {
@@ -67,7 +67,7 @@ impl PingPong {
         record_fn: fn(&T, i64, u64),
     ) {
         loop {
-            let interval = 4.0 + rand::thread_rng().gen_range(-0.5..0.5);
+            let interval = 4.0 + rand07::thread_rng().gen_range(-0.5, 0.5);
             sleep(Duration::from_secs_f64(interval)).await;
             if let Ok(Some((rtt, offset))) = self.ping_peer(&peer_addr).await {
                 // Feed to FinDAGTimeManager using provided function pointer

@@ -1,6 +1,6 @@
 use ed25519_dalek::{Signature, PublicKey};
 use crate::core::address::Address;
-use hex;
+extern crate hex;
 use serde::{Serialize, Deserialize};
 
 /// Unique identifier for a shard
@@ -164,7 +164,7 @@ impl TryFrom<SerializableBlock> for Block {
 }
 
 /// Represents a round checkpoint in the FinDAG DAG
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Round {
     pub round_id: u64,                // Monotonically increasing round number
     pub parent_rounds: Vec<u64>,      // Parent round ids (DAG links)

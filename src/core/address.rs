@@ -1,5 +1,5 @@
 use ed25519_dalek::{Keypair, PublicKey};
-use rand::rngs::OsRng;
+use rand07::rngs::OsRng;
 use sha2::{Sha256, Digest};
 use bech32::{self, ToBase32, Variant};
 use serde::{Serialize, Deserialize};

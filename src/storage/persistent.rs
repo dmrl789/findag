@@ -1,6 +1,5 @@
-use sled::{Db, IVec};
-use serde::{Serialize, Deserialize};
-use crate::core::types::{Block, Round};
+use sled::{Db};
+use crate::core::types::{Block, Round, SerializableBlock, SerializableRound};
 use bincode;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -19,24 +18,32 @@ impl PersistentStorage {
 
     pub fn save_block(&self, block: &Block) {
         let key = [b"block:".as_ref(), &block.block_id].concat();
-        let value = bincode::serialize(block).unwrap();
+        let serializable = SerializableBlock::from(block.clone());
+        let value = bincode::serialize(&serializable).unwrap();
         self.db.insert(key, value).unwrap();
     }
 
     pub fn save_round(&self, round: &Round) {
         let key = [b"round:".as_ref(), &round.round_id.to_be_bytes()].concat();
-        let value = bincode::serialize(round).unwrap();
+        let serializable = SerializableRound::from(round.clone());
+        let value = bincode::serialize(&serializable).unwrap();
         self.db.insert(key, value).unwrap();
     }
 
     pub fn load_block(&self, block_id: &[u8; 32]) -> Option<Block> {
         let key = [b"block:".as_ref(), block_id].concat();
-        self.db.get(key).unwrap().map(|ivec| bincode::deserialize(&ivec).unwrap())
+        self.db.get(key).unwrap().map(|ivec| {
+            let serializable: SerializableBlock = bincode::deserialize(&ivec).unwrap();
+            Block::try_from(serializable).unwrap()
+        })
     }
 
     pub fn load_round(&self, round_id: u64) -> Option<Round> {
         let key = [b"round:".as_ref(), &round_id.to_be_bytes()].concat();
-        self.db.get(key).unwrap().map(|ivec| bincode::deserialize(&ivec).unwrap())
+        self.db.get(key).unwrap().map(|ivec| {
+            let serializable: SerializableRound = bincode::deserialize(&ivec).unwrap();
+            Round::try_from(serializable).unwrap()
+        })
     }
 
     pub fn save_validator_set(&self, set: &ValidatorSet) {

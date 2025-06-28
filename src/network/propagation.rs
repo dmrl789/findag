@@ -1,7 +1,6 @@
-use crate::core::types::{Transaction, Block, Round, SerializableTransaction, SerializableBlock, SerializableRound};
+use crate::core::types::{SerializableTransaction, SerializableBlock, SerializableRound};
 use serde::{Serialize, Deserialize};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};

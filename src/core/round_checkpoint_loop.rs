@@ -1,12 +1,12 @@
 use crate::core::dag_engine::DagEngine;
-use crate::core::types::{Round, Block};
+use crate::core::types::{Round};
 use crate::core::address::Address;
 use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
 use crate::dagtimer::hashtimer::compute_hashtimer;
 use ed25519_dalek::{Keypair, Signer};
 use tokio::time::{sleep, Duration};
 use std::collections::HashSet;
-use storage::persistent::PersistMsg;
+use crate::storage::persistent::PersistMsg;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Runs the round checkpointing loop at the given interval (ms)
@@ -22,7 +22,7 @@ pub async fn run_round_checkpoint_loop(
     let mut last_block_set: HashSet<[u8; 32]> = HashSet::new();
     loop {
         // Collect all new blocks since last round
-        let all_blocks: Vec<_> = dag.blocks.values().collect();
+        let all_blocks: Vec<_> = dag.get_all_blocks();
         let mut new_block_ids = Vec::new();
         for block in &all_blocks {
             if !last_block_set.contains(&block.block_id) {

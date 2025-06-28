@@ -2,9 +2,8 @@ use crate::core::types::{Transaction, Block, ShardId};
 use crate::core::address::Address;
 use ed25519_dalek::{Keypair, Signer};
 use sha2::{Sha256, Digest};
+use rand::Rng;
 use std::collections::HashMap;
-use std::str;
-use hex;
 
 /// Block production logic for FinDAG
 pub struct BlockProducer<'a> {
@@ -44,7 +43,7 @@ impl<'a> BlockProducer<'a> {
     /// Produce a new block from the transaction pool and insert into the DAG
     pub fn produce_block(&mut self) -> Option<Block> {
         // Get transactions from the pool for this shard
-        let txs = self.tx_pool.get_transactions_for_shard(self.shard_id.0 as usize, self.max_txs_per_block);
+        let txs = self.tx_pool.get_transactions(self.shard_id.0 as usize, self.max_txs_per_block.try_into().unwrap());
         if txs.is_empty() {
             return None;
         }
@@ -80,7 +79,7 @@ impl<'a> BlockProducer<'a> {
         let block = Block {
             block_id,
             parent_blocks,
-            transactions: txs.into_iter().cloned().collect(),
+            transactions: txs.into_iter().collect(),
             findag_time,
             hashtimer,
             proposer: self.proposer_address.clone(),

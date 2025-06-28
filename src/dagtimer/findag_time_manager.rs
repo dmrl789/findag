@@ -2,7 +2,7 @@
 // A simplified version of FinDAG Time with peer offset tracking, median filtering, and time smoothing
 
 use std::collections::VecDeque;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_HISTORY: usize = 16;
 const MAX_ALLOWED_SKEW_US: i64 = 5000; // Maximum allowed time adjustment in microseconds
@@ -60,7 +60,7 @@ impl FinDAGTimeManager {
     }
 
     fn compute_median_offset(&self) -> i64 {
-        let mut offsets = self.peer_offsets.clone().into();
+        let mut offsets: Vec<i64> = self.peer_offsets.clone().into();
         if offsets.is_empty() {
             return 0;
         }

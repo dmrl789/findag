@@ -87,7 +87,8 @@ impl BridgeManager {
 
     pub fn commit_ack(&self, tx_id: &str, proof: Option<String>) {
         let mut receipts = self.receipts.lock().unwrap();
-        if let Some(receipt) = receipts.get(tx_id) {
+        let receipt = receipts.get(tx_id).cloned();
+        if let Some(receipt) = receipt {
             // Verify hash proof
             if let (Some(expected), Some(submitted)) = (receipt.proof.as_ref(), proof.as_ref()) {
                 if expected != submitted {
@@ -100,6 +101,7 @@ impl BridgeManager {
                         merkle_proof: receipt.merkle_proof.clone(),
                         timestamp: Utc::now(),
                         error: Some("Invalid proof submitted".to_string()),
+                        zkp: None,
                     });
                     return;
                 }
@@ -117,18 +119,24 @@ impl BridgeManager {
                         merkle_proof: receipt.merkle_proof.clone(),
                         timestamp: Utc::now(),
                         error: Some("Invalid Merkle proof".to_string()),
+                        zkp: None,
                     });
                     return;
                 }
             }
         }
+        let (merkle_root, merkle_proof) = if let Some(receipt) = receipts.get(tx_id) {
+            (receipt.merkle_root.clone(), receipt.merkle_proof.clone())
+        } else {
+            (None, None)
+        };
         receipts.insert(tx_id.to_string(), BridgeReceipt {
             tx_id: tx_id.to_string(),
             status: "committed".to_string(),
             details: Some("Commit/acknowledge phase complete".to_string()),
             proof,
-            merkle_root: receipts.get(tx_id).and_then(|r| r.merkle_root.clone()),
-            merkle_proof: receipts.get(tx_id).and_then(|r| r.merkle_proof.clone()),
+            merkle_root,
+            merkle_proof,
             zkp: None,
             timestamp: Utc::now(),
             error: None,
