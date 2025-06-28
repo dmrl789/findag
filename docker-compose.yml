@@ -1,36 +1,62 @@
 version: '3.8'
-services:
-  findag-node1:
-    build: .
-    container_name: findag-node1
-    ports:
-      - "8081:8080"
-      - "9891:9898"
-      - "9001:9000"
-    environment:
-      - NODE_ID=1
-      - PEERS=172.20.0.3:9002
-    networks:
-      findag-net:
-        ipv4_address: 172.20.0.2
 
-  findag-node2:
+services:
+  # New York Node
+  findag-ny:
     build: .
-    container_name: findag-node2
+    container_name: findag-ny
     ports:
-      - "8082:8080"
-      - "9892:9898"
-      - "9002:9000"
+      - "8080:8080"  # HTTP API
+      - "9898:9898"  # Metrics
+      - "9000:9000"  # P2P
     environment:
-      - NODE_ID=2
-      - PEERS=172.20.0.2:9001
+      - FINDAG_BIND_ADDR=0.0.0.0:8080
+      - FINDAG_PEERS=findag-london:8081
+      - NODE_ID=ny-node-001
+      - NODE_REGION=ny
+    volumes:
+      - ny-data:/app/data
     networks:
-      findag-net:
-        ipv4_address: 172.20.0.3
+      - findag-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # London Node
+  findag-london:
+    build: .
+    container_name: findag-london
+    ports:
+      - "8081:8080"  # HTTP API (mapped to host 8081)
+      - "9899:9898"  # Metrics (mapped to host 9899)
+      - "9001:9000"  # P2P (mapped to host 9001)
+    environment:
+      - FINDAG_BIND_ADDR=0.0.0.0:8080
+      - FINDAG_PEERS=findag-ny:8080
+      - NODE_ID=london-node-001
+      - NODE_REGION=london
+    volumes:
+      - london-data:/app/data
+    networks:
+      - findag-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  ny-data:
+    driver: local
+  london-data:
+    driver: local
 
 networks:
-  findag-net:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16 
+  findag-network:
+    driver: bridge 
