@@ -53,10 +53,12 @@ impl ValidatorSet {
     pub fn assign_validators_to_shards(&mut self, shard_count: u16) {
         self.shard_assignments.clear();
         let mut shard = 0;
-        let mut active = self.active_validators();
-        active.sort_by_key(|v| v.address.as_str().to_string()); // deterministic order
-        for v in active {
-            self.shard_assignments.entry(v.address.as_str().to_string()).or_default().push(shard);
+        let active: Vec<_> = self.active_validators().into_iter().collect();
+        let mut active_clone = active.clone();
+        active_clone.sort_by_key(|v| v.address.as_str().to_string()); // deterministic order
+        let addresses: Vec<_> = active_clone.iter().map(|v| v.address.as_str().to_string()).collect();
+        for addr in addresses {
+            self.shard_assignments.entry(addr).or_default().push(shard);
             shard = (shard + 1) % shard_count;
         }
     }

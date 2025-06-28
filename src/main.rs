@@ -4,27 +4,24 @@ use axum::{
     http::StatusCode,
     Json, Router,
     extract::State,
+    debug_handler,
 };
-use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::Mutex;
 use ed25519_dalek::Keypair;
-use rand::rngs::OsRng;
 use std::net::SocketAddr;
 
-mod core;
-mod dagtimer;
-mod storage;
-mod network;
-
-use crate::core::dag_engine::DagEngine;
-use crate::core::tx_pool::ShardedTxPool;
-use crate::core::address::{Address, generate_address};
-use crate::core::types::{Transaction, Block, ShardId, SerializableTransaction, SerializableBlock};
-use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
-use crate::core::block_production_loop::run_block_production_loop;
-use crate::network::propagation::{NetworkPropagator, GossipMsg};
+use findag::core::dag_engine::DagEngine;
+use findag::core::tx_pool::ShardedTxPool;
+use findag::core::address::{Address, generate_address};
+use findag::core::types::{Transaction, Block, SerializableTransaction, SerializableBlock};
+use findag::dagtimer::findag_time_manager::FinDAGTimeManager;
+use findag::core::block_production_loop::run_block_production_loop;
+use findag::network::propagation::{NetworkPropagator, GossipMsg};
+use findag::consensus::round_finalizer::RoundFinalizer;
+use findag::consensus::validator_set::ValidatorSet;
+use serde_json::json;
 
 #[derive(Clone)]
 struct AppState {
@@ -36,13 +33,58 @@ struct AppState {
     propagator: Arc<NetworkPropagator>,
 }
 
+async fn health() -> StatusCode {
+    StatusCode::OK
+}
+
+async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let dag = state.dag.lock().await;
+    let block_count = dag.block_count() as u64;
+    let peers: Vec<String> = vec![]; // TODO: add real peer info
+    Json(json!({
+        "address": state.address.0,
+        "peers": peers,
+        "block_count": block_count,
+    }))
+}
+
+#[debug_handler]
+async fn submit_transaction(
+    State(state): State<AppState>, 
+    Json(tx): Json<Transaction>
+) -> StatusCode {
+    let added = state.tx_pool.add_transaction(tx.clone());
+    if added {
+        let stx: SerializableTransaction = tx.into();
+        let msg = GossipMsg::NewTransaction(stx);
+        state.propagator.broadcast(&msg).await;
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    }
+}
+
+#[debug_handler]
+async fn get_blocks(State(state): State<AppState>) -> Json<Vec<Block>> {
+    let dag = state.dag.lock().await;
+    let blocks = dag.get_all_blocks();
+    Json(blocks)
+}
+
+#[debug_handler]
+async fn get_dag(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let dag = state.dag.lock().await;
+    let stats = dag.get_stats();
+    Json(json!(stats))
+}
+
 #[tokio::main]
 async fn main() {
     println!("FinDAG node is starting...");
 
     // --- Node identity ---
     let (keypair, address) = generate_address();
-    let keypair = Arc::new(keypair);
+    let keypair: Arc<Keypair> = Arc::new(keypair);
     println!("Node address: {}", address.0);
 
     // --- DAG engine ---
@@ -97,8 +139,9 @@ async fn main() {
     tokio::spawn(async move {
         let (persist_tx, _persist_rx) = unbounded_channel();
         let mut dag = dag_clone.lock().await;
-        let round_finalizer = crate::core::consensus::round_finalizer::RoundFinalizer::dummy();
+        let validator_set = ValidatorSet::new();
         loop {
+            let round_finalizer = RoundFinalizer::dummy(&validator_set);
             run_block_production_loop(
                 &mut dag,
                 &tx_pool_clone,
@@ -109,7 +152,7 @@ async fn main() {
                 &time_manager_clone,
                 persist_tx.clone(),
                 0, // single-shard
-                round_finalizer.clone(),
+                round_finalizer,
             ).await;
             // After producing a block, broadcast it
             if let Some(block) = dag.get_all_blocks().last() {
@@ -132,63 +175,12 @@ async fn main() {
 
     // --- API endpoints ---
     let app = Router::new()
-        .route("/health", get(|| async { StatusCode::OK }))
-        .route("/node/info", get({
-            let state = state.clone();
-            move || {
-                let state = state.clone();
-                async move {
-                    let dag = state.dag.lock().await;
-                    let block_count = dag.block_count() as u64;
-                    let peers = vec![]; // TODO: add real peer info
-                    Json(serde_json::json!({
-                        "address": state.address.0,
-                        "peers": peers,
-                        "block_count": block_count,
-                    }))
-                }
-            }
-        }))
-        .route("/transactions", post({
-            let state = state.clone();
-            move |Json(tx): Json<Transaction>| {
-                let state = state.clone();
-                async move {
-                    // Add transaction to sharded pool and broadcast
-                    let added = state.tx_pool.add_transaction(tx.clone());
-                    if added {
-                        let stx: SerializableTransaction = tx.into();
-                        let msg = GossipMsg::NewTransaction(stx);
-                        state.propagator.broadcast(&msg).await;
-                        StatusCode::OK
-                    } else {
-                        StatusCode::BAD_REQUEST
-                    }
-                }
-            }
-        }))
-        .route("/blocks", get({
-            let state = state.clone();
-            move || {
-                let state = state.clone();
-                async move {
-                    let dag = state.dag.lock().await;
-                    let blocks = dag.get_all_blocks();
-                    Json(blocks)
-                }
-            }
-        }))
-        .route("/dag", get({
-            let state = state.clone();
-            move || {
-                let state = state.clone();
-                async move {
-                    let dag = state.dag.lock().await;
-                    let stats = dag.get_stats();
-                    Json(stats)
-                }
-            }
-        }));
+        .route("/health", get(health))
+        .route("/node/info", get(node_info))
+        .route("/transactions", post(submit_transaction))
+        .route("/blocks", get(get_blocks))
+        .route("/dag", get(get_dag))
+        .with_state(state);
 
     // --- Start HTTP server ---
     let bind_addr = std::env::var("FINDAG_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());

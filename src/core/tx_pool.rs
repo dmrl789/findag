@@ -1,7 +1,7 @@
-use crate::core::types::{Transaction, SUPPORTED_ASSETS};
+use crate::core::types::{Transaction};
 use std::collections::{HashMap, BTreeMap};
 use std::sync::{Arc, Mutex};
-use storage::state::StateDB;
+use crate::storage::state::StateDB;
 use crate::metrics;
 
 const SHARD_COUNT: usize = 16;
@@ -129,7 +129,7 @@ pub struct ShardedTxPool {
 impl ShardedTxPool {
     pub fn new_with_whitelist_per_shard(max_size_per_shard: usize, asset_whitelist: Arc<Mutex<Vec<String>>>, shard_count: usize) -> Self {
         let mut shards = Vec::with_capacity(shard_count);
-        let state_db = Arc::new(StateDB::default()); // TODO: Pass real state_db if needed
+        let state_db = Arc::new(StateDB::new("state_db")); // TODO: Pass real state_db if needed
         for _ in 0..shard_count {
             shards.push(Mutex::new(TxPool::new(max_size_per_shard, state_db.clone(), asset_whitelist.clone())));
         }
@@ -150,7 +150,8 @@ impl ShardedTxPool {
     pub fn get_transactions(&self, limit: usize, shard_id: u16) -> Vec<Transaction> {
         let mut txs = Vec::new();
         let shard = self.shard_for_id(shard_id);
-        let shard_txs = self.shards[shard].lock().unwrap().get_transactions(limit);
+        let binding = self.shards[shard].lock().unwrap();
+        let shard_txs = binding.get_transactions(limit);
         for tx in shard_txs {
             txs.push(tx.clone());
             if txs.len() == limit {
