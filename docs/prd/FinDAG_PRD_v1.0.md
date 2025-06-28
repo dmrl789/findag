@@ -2,7 +2,7 @@
 
 **Product Name:** FinDAG  
 **Version:** 1.0  
-**Owner:** [Your Name]  
+**Owner:** DMRL789 LLC  
 **Last Updated:** 2025-06-26
 
 ---
@@ -291,6 +291,22 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
     ```bash
     curl http://localhost:8080/assets
     ```
+
+### 4.12 Merkle Proofs and Block Integrity
+
+- **Merkle Root in Block Header:**
+  - Every block includes a Merkle root of all transaction hashes, enabling cryptographic inclusion proofs.
+- **API Endpoints:**
+  - `GET /block/:id` — Returns block info, Merkle root, and transaction hashes.
+  - `GET /block/:id/merkle_proof/:tx_hash` — Returns a Merkle proof for a transaction in the block.
+- **SDK Support:**
+  - TypeScript SDK provides methods to fetch blocks, fetch Merkle proofs, and verify proofs (Node.js and browser support planned).
+- **Use Cases:**
+  - Wallets, bridges, and auditors can verify that a transaction is included in a block without trusting the node.
+- **Browser Compatibility:**
+  - Node.js SDK supports proof verification; browser support is planned using Web Crypto APIs.
+- **Documentation and Examples:**
+  - See SDK and API docs for example usage and integration flows.
 
 ---
 

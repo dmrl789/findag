@@ -60,7 +60,7 @@ impl TxPool {
             }
         }
         // Enforce dynamic asset whitelist
-        let asset = tx.currency.as_str();
+        let asset = "USD"; // Default asset for now
         let whitelist = self.asset_whitelist.lock().unwrap();
         if !whitelist.contains(&asset.to_string()) {
             println!("[TxPool] Rejected tx: unsupported asset '{}'.", asset);

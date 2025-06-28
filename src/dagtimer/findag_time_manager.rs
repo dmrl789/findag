@@ -15,6 +15,7 @@ pub struct PeerPing {
     pub rtt_us: u64,    // Round-trip time in microseconds
 }
 
+#[derive(Debug, Clone)]
 pub struct FinDAGTimeManager {
     peer_offsets: VecDeque<i64>,
     last_adjusted_time: SystemTime,
@@ -59,7 +60,7 @@ impl FinDAGTimeManager {
     }
 
     fn compute_median_offset(&self) -> i64 {
-        let mut offsets = self.peer_offsets.clone().into_vec();
+        let mut offsets = self.peer_offsets.clone().into();
         if offsets.is_empty() {
             return 0;
         }

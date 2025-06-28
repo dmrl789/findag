@@ -1,4 +1,4 @@
-use crate::core::types::{Transaction, Block, Round};
+use crate::core::types::{Transaction, Block, Round, SerializableTransaction, SerializableBlock, SerializableRound};
 use serde::{Serialize, Deserialize};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -9,9 +9,9 @@ use crate::metrics;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum GossipMsg {
-    NewTransaction(Transaction),
-    NewBlock(Block),
-    NewRound(Round),
+    NewTransaction(SerializableTransaction),
+    NewBlock(SerializableBlock),
+    NewRound(SerializableRound),
 }
 
 pub struct NetworkPropagator {

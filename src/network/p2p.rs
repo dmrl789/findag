@@ -132,6 +132,10 @@ pub async fn run_p2p_node(
                                         tx_pool.add_transaction(tx);
                                     }
                                     P2PMsg::NewBlock(block) => {
+                                        if !block.validate_merkle_root() {
+                                            println!("Rejected block with invalid Merkle root: {:?}", block.block_id);
+                                            continue;
+                                        }
                                         dag.add_block(block);
                                     }
                                     P2PMsg::NewRound(round) => {

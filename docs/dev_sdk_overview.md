@@ -67,6 +67,26 @@ console.log(result);
 - Planned: Example dApps (wallet, explorer, asset issuer, governance portal)
 - Planned: Integration guides for exchanges, custodians, and fintechs
 
+## Merkle Proofs and Block Endpoints
+
+FinDAG SDK allows you to fetch a block, get its Merkle root, and request a Merkle proof for a transaction. You can then verify the proof using the SDK:
+
+```typescript
+const block = await client.getBlock('abcdef...');
+const proofRes = await client.getMerkleProof('abcdef...', 'txhash...');
+const isValid = FinDAGClient.verifyMerkleProof(
+  'txhash...',
+  proofRes.proof,
+  block.merkle_root,
+  0 // index of tx in block.transactions
+);
+console.log('Proof valid?', isValid);
+```
+
+- `getBlock(blockId)` fetches block info including the Merkle root and transaction hashes.
+- `getMerkleProof(blockId, txHash)` fetches a Merkle proof for a transaction in the block.
+- `verifyMerkleProof(txHash, proof, root, index)` verifies the proof (Node.js only; browser support planned).
+
 ---
 
 For feedback or to contribute to SDK development, contact the FinDAG team or visit the repository. 

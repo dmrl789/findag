@@ -19,15 +19,19 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use metrics;
 use crate::core::types::ShardId;
-use crate::core::bridge::BridgeTx;
+use crate::core::bridge::{BridgeTx, BridgeManager};
 use crate::core::confidential::ConfidentialTx;
 use crate::core::identity::Identity;
+use once_cell::sync::Lazy;
+use crate::core::types::Block;
+use axum::http::StatusCode;
 
 static mut VALIDATOR_SET: Option<Arc<Mutex<ValidatorSet>>> = None;
 static mut STORAGE: Option<Arc<crate::storage::persistent::PersistentStorage>> = None;
 static mut GOVERNANCE_STATE: Option<Arc<Mutex<crate::consensus::governance::GovernanceState>>> = None;
 const ADMIN_TOKEN: &str = "changeme";
 const JWT_SECRET: &[u8] = b"changeme_jwt_secret"; // Replace with secure secret in production
+static BRIDGE_MANAGER: Lazy<BridgeManager> = Lazy::new(|| BridgeManager::new());
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Transaction {
@@ -263,16 +267,30 @@ async fn get_assets() -> Json<serde_json::Value> {
 
 /// POST /bridge/outbound: Initiate an outbound cross-chain transfer
 async fn outbound_bridge(Json(req): Json<BridgeTx>) -> Json<serde_json::Value> {
-    // TODO: Lock assets, generate proof, relay to target chain
-    println!("[Bridge] Outbound: {:?}", req);
-    Json(serde_json::json!({ "status": "pending", "details": "Bridge logic not yet implemented" }))
+    // Lock assets, generate proof, relay to target chain
+    let tx_id = format!("out-{}-{}-{}", req.source_chain, req.sender, req.amount); // Example tx_id
+    BRIDGE_MANAGER.lock_prepare(&tx_id, None);
+    let receipt = BRIDGE_MANAGER.get_status(&tx_id).unwrap();
+    Json(serde_json::json!({ "status": receipt.status, "tx_id": tx_id, "details": receipt.details, "proof": receipt.proof }))
 }
 
 /// POST /bridge/inbound: Finalize an inbound cross-chain transfer
 async fn inbound_bridge(Json(req): Json<BridgeTx>) -> Json<serde_json::Value> {
-    // TODO: Verify proof, mint/unlock assets
-    println!("[Bridge] Inbound: {:?}", req);
-    Json(serde_json::json!({ "status": "pending", "details": "Bridge logic not yet implemented" }))
+    // Require and verify proof
+    let tx_id = format!("in-{}-{}-{}", req.target_chain, req.recipient, req.amount); // Example tx_id
+    let proof = req.proof.clone();
+    BRIDGE_MANAGER.commit_ack(&tx_id, proof);
+    let receipt = BRIDGE_MANAGER.get_status(&tx_id).unwrap();
+    Json(serde_json::json!({ "status": receipt.status, "tx_id": tx_id, "details": receipt.details, "proof": receipt.proof, "error": receipt.error }))
+}
+
+/// GET /bridge/status/:txid: Query bridge transaction status
+async fn bridge_status(Path(tx_id): Path<String>) -> Json<serde_json::Value> {
+    if let Some(receipt) = BRIDGE_MANAGER.get_status(&tx_id) {
+        Json(serde_json::json!({ "status": receipt.status, "tx_id": tx_id, "details": receipt.details }))
+    } else {
+        Json(serde_json::json!({ "status": "not_found", "tx_id": tx_id }))
+    }
 }
 
 /// POST /confidential/tx: Submit a confidential transaction
@@ -287,6 +305,58 @@ async fn register_identity(Json(req): Json<Identity>) -> Json<serde_json::Value>
     // TODO: Register or update identity, perform KYC checks
     println!("[Identity] Register/update: {:?}", req);
     Json(serde_json::json!({ "status": "pending", "details": "Identity logic not yet implemented" }))
+}
+
+/// GET /block/:id - Returns block info including merkle_root
+async fn get_block(Path(id): Path<String>) -> (StatusCode, Json<serde_json::Value>) {
+    let storage = unsafe { STORAGE.as_ref().unwrap() };
+    let id_bytes = match hex::decode(&id) {
+        Ok(bytes) => {
+            let mut arr = [0u8; 32];
+            if bytes.len() == 32 { arr.copy_from_slice(&bytes); Some(arr) } else { None }
+        },
+        Err(_) => None,
+    };
+    if let Some(block_id) = id_bytes {
+        if let Some(block) = storage.load_block(&block_id) {
+            return (StatusCode::OK, Json(serde_json::json!({
+                "block_id": id,
+                "parent_blocks": block.parent_blocks.iter().map(hex::encode).collect::<Vec<_>>(),
+                "merkle_root": block.merkle_root.map(hex::encode),
+                "transactions": block.transactions.iter().map(|tx| hex::encode(&tx.hashtimer)).collect::<Vec<_>>()
+            })));
+        }
+    }
+    (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "block not found"})))
+}
+
+/// GET /block/:id/merkle_proof/:tx_hash - Returns Merkle proof for a transaction in the block
+async fn get_merkle_proof(Path((id, tx_hash)): Path<(String, String)>) -> (StatusCode, Json<serde_json::Value>) {
+    let storage = unsafe { STORAGE.as_ref().unwrap() };
+    let id_bytes = match hex::decode(&id) {
+        Ok(bytes) => {
+            let mut arr = [0u8; 32];
+            if bytes.len() == 32 { arr.copy_from_slice(&bytes); Some(arr) } else { None }
+        },
+        Err(_) => None,
+    };
+    if let Some(block_id) = id_bytes {
+        if let Some(block) = storage.load_block(&block_id) {
+            let tx_hashes: Vec<String> = block.transactions.iter().map(|tx| hex::encode(&tx.hashtimer)).collect();
+            if let Some(idx) = tx_hashes.iter().position(|h| h == &tx_hash) {
+                use crate::core::bridge::merkle_proof;
+                let proof = merkle_proof(&tx_hashes, idx);
+                return (StatusCode::OK, Json(serde_json::json!({
+                    "block_id": id,
+                    "tx_hash": tx_hash,
+                    "proof": proof
+                })));
+            } else {
+                return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "tx not in block"})));
+            }
+        }
+    }
+    (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "block not found"})))
 }
 
 fn audit_log(subject: &str, action: &str, details: &str) {
@@ -317,8 +387,11 @@ pub async fn run_http_server() {
         .route("/assets", get(get_assets))
         .route("/bridge/outbound", post(outbound_bridge))
         .route("/bridge/inbound", post(inbound_bridge))
+        .route("/bridge/status/:txid", get(bridge_status))
         .route("/confidential/tx", post(submit_confidential_tx))
-        .route("/identity/register", post(register_identity));
+        .route("/identity/register", post(register_identity))
+        .route("/block/:id", get(get_block))
+        .route("/block/:id/merkle_proof/:tx_hash", get(get_merkle_proof));
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     println!("HTTP API listening on http://{}", addr);
     axum::Server::bind(&addr)

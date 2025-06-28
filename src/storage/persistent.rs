@@ -8,7 +8,7 @@ use crate::consensus::validator_set::ValidatorSet;
 use crate::consensus::governance::GovernanceState;
 
 pub struct PersistentStorage {
-    db: Arc<Db>,
+    pub db: Arc<Db>,
 }
 
 impl PersistentStorage {

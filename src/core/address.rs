@@ -2,11 +2,12 @@ use ed25519_dalek::{Keypair, PublicKey};
 use rand::rngs::OsRng;
 use sha2::{Sha256, Digest};
 use bech32::{self, ToBase32, Variant};
+use serde::{Serialize, Deserialize};
 
 const HRP: &str = "fdg";
 const VERSION: u8 = 0x01;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Address(pub String);
 
 impl Address {
