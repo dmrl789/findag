@@ -11,6 +11,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::Mutex;
 use ed25519_dalek::Keypair;
 use std::net::SocketAddr;
+use tower_http::cors::{CorsLayer, Any};
 
 use findag::core::dag_engine::DagEngine;
 use findag::core::tx_pool::ShardedTxPool;
@@ -174,12 +175,18 @@ async fn main() {
     };
 
     // --- API endpoints ---
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/node/info", get(node_info))
         .route("/transactions", post(submit_transaction))
         .route("/blocks", get(get_blocks))
         .route("/dag", get(get_dag))
+        .layer(cors)
         .with_state(state);
 
     // --- Start HTTP server ---
