@@ -1,6 +1,4 @@
-use std::sync::{Arc, Mutex};
-use tokio::time::{sleep, Duration};
-use std::env;
+use std::sync::Arc;
 use axum::{
     routing::{get, post},
     http::StatusCode,
@@ -9,206 +7,192 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::Mutex;
+use ed25519_dalek::Keypair;
+use rand::rngs::OsRng;
+use std::net::SocketAddr;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Address(pub String);
+mod core;
+mod dagtimer;
+mod storage;
+mod network;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub from: Address,
-    pub to: Address,
-    pub amount: u64,
-    pub timestamp: u64,
-}
+use crate::core::dag_engine::DagEngine;
+use crate::core::tx_pool::ShardedTxPool;
+use crate::core::address::{Address, generate_address};
+use crate::core::types::{Transaction, Block, ShardId, SerializableTransaction, SerializableBlock};
+use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
+use crate::core::block_production_loop::run_block_production_loop;
+use crate::network::propagation::{NetworkPropagator, GossipMsg};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Block {
-    pub block_id: String,
-    pub transactions: Vec<Transaction>,
-    pub timestamp: u64,
-    pub proposer: Address,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeInfo {
-    pub address: Address,
-    pub peers: Vec<String>,
-    pub block_count: u64,
-    pub transaction_count: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct SimpleStorage {
-    pub transactions: Arc<Mutex<Vec<Transaction>>>,
-    pub blocks: Arc<Mutex<Vec<Block>>>,
-    pub peers: Arc<Mutex<Vec<String>>>,
-}
-
-impl SimpleStorage {
-    pub fn new() -> Self {
-        Self {
-            transactions: Arc::new(Mutex::new(Vec::new())),
-            blocks: Arc::new(Mutex::new(Vec::new())),
-            peers: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    pub async fn add_transaction(&self, tx: Transaction) {
-        let mut txs = self.transactions.lock().unwrap();
-        txs.push(tx);
-        println!("Added transaction: {:?}", txs.last().unwrap());
-    }
-
-    pub async fn add_block(&self, block: Block) {
-        let mut blocks = self.blocks.lock().unwrap();
-        blocks.push(block);
-        println!("Added block: {:?}", blocks.last().unwrap());
-    }
-
-    pub async fn get_stats(&self) -> (u64, u64) {
-        let block_count = self.blocks.lock().unwrap().len() as u64;
-        let tx_count = self.transactions.lock().unwrap().len() as u64;
-        (block_count, tx_count)
-    }
-}
-
-async fn health_check() -> StatusCode {
-    StatusCode::OK
-}
-
-async fn get_node_info(State(storage): State<Arc<SimpleStorage>>) -> Json<NodeInfo> {
-    let (block_count, transaction_count) = storage.get_stats().await;
-    let peers = storage.peers.lock().unwrap().clone();
-    
-    Json(NodeInfo {
-        address: Address("fdg1testnode".to_string()),
-        peers,
-        block_count,
-        transaction_count,
-    })
-}
-
-async fn submit_transaction(
-    State(storage): State<Arc<SimpleStorage>>,
-    Json(tx): Json<Transaction>,
-) -> StatusCode {
-    storage.add_transaction(tx).await;
-    StatusCode::OK
-}
-
-async fn get_transactions(State(storage): State<Arc<SimpleStorage>>) -> Json<Vec<Transaction>> {
-    let txs = storage.transactions.lock().unwrap().clone();
-    Json(txs)
-}
-
-async fn get_blocks(State(storage): State<Arc<SimpleStorage>>) -> Json<Vec<Block>> {
-    let blocks = storage.blocks.lock().unwrap().clone();
-    Json(blocks)
-}
-
-async fn block_production_loop(storage: Arc<SimpleStorage>) {
-    let mut block_id = 0u64;
-    let proposer = Address("fdg1testnode".to_string());
-    loop {
-        sleep(Duration::from_secs(5)).await;
-        let block_transactions = {
-            let mut txs = storage.transactions.lock().unwrap();
-            if txs.is_empty() {
-                None
-            } else {
-                let tx_count = txs.len();
-                Some(txs.drain(..std::cmp::min(10, tx_count)).collect::<Vec<_>>())
-            }
-        };
-        if let Some(block_transactions) = block_transactions {
-            let block = Block {
-                block_id: format!("block_{}", block_id),
-                transactions: block_transactions,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-                proposer: proposer.clone(),
-            };
-            storage.add_block(block).await;
-            block_id += 1;
-            println!("Produced block {}", block_id);
-        }
-    }
-}
-
-async fn transaction_generator(storage: Arc<SimpleStorage>) {
-    let addresses = vec![
-        Address("fdg1alice".to_string()),
-        Address("fdg1bob".to_string()),
-        Address("fdg1charlie".to_string()),
-        Address("fdg1diana".to_string()),
-    ];
-    let rng = fastrand::Rng::new();
-    loop {
-        sleep(Duration::from_millis(1000)).await;
-        let from = addresses[rng.usize(..addresses.len())].clone();
-        let to = addresses[rng.usize(..addresses.len())].clone();
-        if from.0 != to.0 {
-            let tx = Transaction {
-                from,
-                to,
-                amount: rng.u64(1..1000),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            };
-            storage.add_transaction(tx).await;
-        }
-    }
+#[derive(Clone)]
+struct AppState {
+    dag: Arc<Mutex<DagEngine>>,
+    tx_pool: Arc<ShardedTxPool>,
+    time_manager: Arc<FinDAGTimeManager>,
+    keypair: Arc<Keypair>,
+    address: Address,
+    propagator: Arc<NetworkPropagator>,
 }
 
 #[tokio::main]
 async fn main() {
-    println!("Starting FinDAG Node...");
-    
-    let bind_addr = env::var("FINDAG_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    let peers = env::var("FINDAG_PEERS")
-        .unwrap_or_else(|_| "127.0.0.1:8081,127.0.0.1:8082".to_string())
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect::<Vec<_>>();
-    
-    println!("Bind address: {}", bind_addr);
-    println!("Peers: {:?}", peers);
-    
-    let storage = Arc::new(SimpleStorage::new());
-    
-    {
-        let mut peer_list = storage.peers.lock().unwrap();
-        peer_list.extend(peers);
-    }
-    
-    let storage_clone = storage.clone();
+    println!("FinDAG node is starting...");
+
+    // --- Node identity ---
+    let (keypair, address) = generate_address();
+    let keypair = Arc::new(keypair);
+    println!("Node address: {}", address.0);
+
+    // --- DAG engine ---
+    let dag = Arc::new(Mutex::new(DagEngine::new()));
+
+    // --- Sharded mempool ---
+    let asset_whitelist = Arc::new(std::sync::Mutex::new(vec!["USD".to_string()]));
+    let tx_pool = Arc::new(ShardedTxPool::new_with_whitelist_per_shard(100_000, asset_whitelist, 1));
+
+    // --- Time manager ---
+    let time_manager = Arc::new(FinDAGTimeManager::new());
+
+    // --- Network propagator ---
+    let udp_port = std::env::var("FINDAG_UDP_PORT").unwrap_or_else(|_| "9000".to_string());
+    let udp_bind = format!("0.0.0.0:{}", udp_port);
+    let peer_str = std::env::var("FINDAG_PEERS").unwrap_or_else(|_| "127.0.0.1:9001".to_string());
+    let peers: Vec<SocketAddr> = peer_str.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+    let propagator = Arc::new(NetworkPropagator::new(&udp_bind, peers).await.unwrap());
+
+    // --- Spawn gossip listener ---
+    let dag_clone = dag.clone();
+    let tx_pool_clone = tx_pool.clone();
+    let propagator_clone = propagator.clone();
     tokio::spawn(async move {
-        block_production_loop(storage_clone).await;
+        propagator_clone.listen(move |msg| {
+            match msg {
+                GossipMsg::NewTransaction(stx) => {
+                    // Convert to Transaction and add to pool
+                    if let Ok(tx) = Transaction::try_from(stx) {
+                        tx_pool_clone.add_transaction(tx);
+                    }
+                }
+                GossipMsg::NewBlock(sblock) => {
+                    // Convert to Block and add to DAG
+                    if let Ok(block) = Block::try_from(sblock) {
+                        let mut dag = dag_clone.blocking_lock();
+                        let _ = dag.add_block(block);
+                    }
+                }
+                _ => {}
+            }
+        }).await;
     });
-    
-    let storage_clone = storage.clone();
+
+    // --- Block production loop ---
+    let dag_clone = dag.clone();
+    let tx_pool_clone = tx_pool.clone();
+    let time_manager_clone = time_manager.clone();
+    let keypair_clone = keypair.clone();
+    let address_clone = address.clone();
+    let propagator_clone = propagator.clone();
     tokio::spawn(async move {
-        transaction_generator(storage_clone).await;
+        let (persist_tx, _persist_rx) = unbounded_channel();
+        let mut dag = dag_clone.lock().await;
+        let round_finalizer = crate::core::consensus::round_finalizer::RoundFinalizer::dummy();
+        loop {
+            run_block_production_loop(
+                &mut dag,
+                &tx_pool_clone,
+                address_clone.clone(),
+                &keypair_clone,
+                100,
+                1000, // 1 block/sec for demo
+                &time_manager_clone,
+                persist_tx.clone(),
+                0, // single-shard
+                round_finalizer.clone(),
+            ).await;
+            // After producing a block, broadcast it
+            if let Some(block) = dag.get_all_blocks().last() {
+                let sblock: SerializableBlock = block.clone().into();
+                let msg = GossipMsg::NewBlock(sblock);
+                propagator_clone.broadcast(&msg).await;
+            }
+        }
     });
-    
+
+    // --- App state ---
+    let state = AppState {
+        dag: dag.clone(),
+        tx_pool: tx_pool.clone(),
+        time_manager: time_manager.clone(),
+        keypair: keypair.clone(),
+        address: address.clone(),
+        propagator: propagator.clone(),
+    };
+
+    // --- API endpoints ---
     let app = Router::new()
-        .route("/health", get(health_check))
-        .route("/node/info", get(get_node_info))
-        .route("/transactions", get(get_transactions))
-        .route("/transactions", post(submit_transaction))
-        .route("/blocks", get(get_blocks))
-        .with_state(storage);
-    
+        .route("/health", get(|| async { StatusCode::OK }))
+        .route("/node/info", get({
+            let state = state.clone();
+            move || {
+                let state = state.clone();
+                async move {
+                    let dag = state.dag.lock().await;
+                    let block_count = dag.block_count() as u64;
+                    let peers = vec![]; // TODO: add real peer info
+                    Json(serde_json::json!({
+                        "address": state.address.0,
+                        "peers": peers,
+                        "block_count": block_count,
+                    }))
+                }
+            }
+        }))
+        .route("/transactions", post({
+            let state = state.clone();
+            move |Json(tx): Json<Transaction>| {
+                let state = state.clone();
+                async move {
+                    // Add transaction to sharded pool and broadcast
+                    let added = state.tx_pool.add_transaction(tx.clone());
+                    if added {
+                        let stx: SerializableTransaction = tx.into();
+                        let msg = GossipMsg::NewTransaction(stx);
+                        state.propagator.broadcast(&msg).await;
+                        StatusCode::OK
+                    } else {
+                        StatusCode::BAD_REQUEST
+                    }
+                }
+            }
+        }))
+        .route("/blocks", get({
+            let state = state.clone();
+            move || {
+                let state = state.clone();
+                async move {
+                    let dag = state.dag.lock().await;
+                    let blocks = dag.get_all_blocks();
+                    Json(blocks)
+                }
+            }
+        }))
+        .route("/dag", get({
+            let state = state.clone();
+            move || {
+                let state = state.clone();
+                async move {
+                    let dag = state.dag.lock().await;
+                    let stats = dag.get_stats();
+                    Json(stats)
+                }
+            }
+        }));
+
+    // --- Start HTTP server ---
+    let bind_addr = std::env::var("FINDAG_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
     let listener = TcpListener::bind(&bind_addr).await.unwrap();
     println!("HTTP server listening on http://{}", bind_addr);
-    println!("Health check: http://{}/health", bind_addr);
-    println!("Node info: http://{}/node/info", bind_addr);
-    println!("Transactions: http://{}/transactions", bind_addr);
-    println!("Blocks: http://{}/blocks", bind_addr);
-    
     axum::serve(listener, app).await.unwrap();
 } 
