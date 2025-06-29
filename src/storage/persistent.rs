@@ -1,19 +1,26 @@
-use sled::{Db};
-use crate::core::types::{Block, Round, SerializableBlock, SerializableRound};
+// Usage:
+// let storage = Arc::new(PersistentStorage::new("findag_db"));
+// let (tx, rx) = mpsc::unbounded_channel();
+// storage.clone().spawn_background_writer(rx);
+// tx.send(PersistMsg::Block(block)).unwrap();
+// tx.send(PersistMsg::Round(round)).unwrap(); 
+
+use sled;
+use crate::core::types::{Block, Round, SerializableBlock, SerializableRound, AssetRecord};
 use bincode;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use crate::consensus::validator_set::ValidatorSet;
-use crate::consensus::governance::GovernanceState;
+use crate::core::handle_registry::HandleRecord;
 
 pub struct PersistentStorage {
-    pub db: Arc<Db>,
+    db: sled::Db,
 }
 
 impl PersistentStorage {
-    pub fn new(path: &str) -> Self {
-        let db = sled::open(path).expect("Failed to open sled DB");
-        Self { db: Arc::new(db) }
+    pub fn new(path: &str) -> Result<Self, sled::Error> {
+        let db = sled::open(path)?;
+        Ok(Self { db })
     }
 
     pub fn save_block(&self, block: &Block) {
@@ -46,37 +53,64 @@ impl PersistentStorage {
         })
     }
 
-    pub fn save_validator_set(&self, set: &ValidatorSet) {
-        let key = b"validators";
-        let value = bincode::serialize(set).unwrap();
-        self.db.insert(key, value).unwrap();
+    pub fn store_validator_set(&self, set: &ValidatorSet) -> Result<(), Box<dyn std::error::Error>> {
+        let key = b"validator_set";
+        let value = bincode::serialize(set)?;
+        self.db.insert(key, value)?;
+        Ok(())
     }
 
-    pub fn load_validator_set(&self) -> Option<ValidatorSet> {
-        let key = b"validators";
-        self.db.get(key).unwrap().map(|ivec| bincode::deserialize(&ivec).unwrap())
+    pub fn load_validator_set(&self) -> Result<Option<ValidatorSet>, Box<dyn std::error::Error>> {
+        let key = b"validator_set";
+        match self.db.get(key)? {
+            Some(ivec) => {
+                let set: ValidatorSet = bincode::deserialize(&ivec)?;
+                Ok(Some(set))
+            }
+            None => Ok(None),
+        }
     }
 
-    pub fn save_governance_state(&self, state: &GovernanceState) {
-        let key = b"governance";
-        let value = bincode::serialize(state).unwrap();
-        self.db.insert(key, value).unwrap();
+    pub fn store_governance_state(&self, state: &crate::consensus::governance::GovernanceState) -> Result<(), Box<dyn std::error::Error>> {
+        let key = b"governance_state";
+        let value = bincode::serialize(state)?;
+        self.db.insert(key, value)?;
+        Ok(())
     }
 
-    pub fn load_governance_state(&self) -> Option<GovernanceState> {
-        let key = b"governance";
-        self.db.get(key).unwrap().map(|ivec| bincode::deserialize(&ivec).unwrap())
+    pub fn load_governance_state(&self) -> Result<Option<crate::consensus::governance::GovernanceState>, Box<dyn std::error::Error>> {
+        let key = b"governance_state";
+        match self.db.get(key)? {
+            Some(ivec) => {
+                let state: crate::consensus::governance::GovernanceState = bincode::deserialize(&ivec)?;
+                Ok(Some(state))
+            }
+            None => Ok(None),
+        }
     }
 
-    pub fn save_asset_whitelist(&self, whitelist: &Vec<String>) {
-        let key = b"asset_whitelist";
-        let value = bincode::serialize(whitelist).unwrap();
-        self.db.insert(key, value).unwrap();
+    pub fn store_parameter(&self, key: &str, value: &str) -> Result<(), sled::Error> {
+        let key_bytes = key.as_bytes();
+        let value_bytes = value.as_bytes();
+        self.db.insert(key_bytes, value_bytes)?;
+        Ok(())
     }
 
-    pub fn load_asset_whitelist(&self) -> Option<Vec<String>> {
-        let key = b"asset_whitelist";
-        self.db.get(key).unwrap().map(|ivec| bincode::deserialize(&ivec).unwrap())
+    pub fn load_parameter(&self, key: &str) -> Result<Option<String>, sled::Error> {
+        let key_bytes = key.as_bytes();
+        match self.db.get(key_bytes)? {
+            Some(ivec) => {
+                let value = String::from_utf8(ivec.to_vec())
+                    .map_err(|_| sled::Error::Corruption { at: None, bt: () })?;
+                Ok(Some(value))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn flush(&self) -> Result<(), sled::Error> {
+        self.db.flush()?;
+        Ok(())
     }
 
     /// Async, batched write example: send blocks/rounds to this channel for background persistence
@@ -90,17 +124,42 @@ impl PersistentStorage {
             }
         });
     }
+
+    // Store an asset record
+    pub fn store_asset(&self, asset: &AssetRecord) -> Result<(), sled::Error> {
+        let key = format!("asset:{}", asset.asset_id);
+        let value = bincode::serialize(asset).unwrap();
+        self.db.insert(key.as_bytes(), value)?;
+        Ok(())
+    }
+
+    // Load an asset record
+    pub fn load_asset(&self, asset_id: &str) -> Option<AssetRecord> {
+        let key = format!("asset:{}", asset_id);
+        self.db.get(key.as_bytes()).unwrap().map(|ivec| {
+            bincode::deserialize(&ivec).unwrap()
+        })
+    }
+
+    // Store a handle record
+    pub fn store_handle(&self, handle: &HandleRecord) -> Result<(), sled::Error> {
+        let key = format!("handle:{}", handle.handle);
+        let value = bincode::serialize(handle).unwrap();
+        self.db.insert(key.as_bytes(), value)?;
+        Ok(())
+    }
+
+    // Load a handle record
+    pub fn load_handle(&self, handle: &str) -> Option<HandleRecord> {
+        let key = format!("handle:{}", handle);
+        self.db.get(key.as_bytes()).unwrap().map(|ivec| {
+            bincode::deserialize(&ivec).unwrap()
+        })
+    }
 }
 
 #[derive(Debug)]
 pub enum PersistMsg {
     Block(Block),
     Round(Round),
-}
-
-// Usage:
-// let storage = Arc::new(PersistentStorage::new("findag_db"));
-// let (tx, rx) = mpsc::unbounded_channel();
-// storage.clone().spawn_background_writer(rx);
-// tx.send(PersistMsg::Block(block)).unwrap();
-// tx.send(PersistMsg::Round(round)).unwrap(); 
+} 

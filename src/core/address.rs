@@ -18,7 +18,7 @@ impl Address {
         let hash = hasher.finalize();
         let mut data = vec![VERSION];
         data.extend_from_slice(&hash[..32]);
-        let bech = bech32::encode(HRP, data.to_base32(), Variant::Bech32).unwrap();
+        let bech = bech32::encode(HRP, data.as_slice().to_base32(), Variant::Bech32).unwrap();
         Address(bech)
     }
     pub fn as_str(&self) -> &str {
@@ -37,7 +37,6 @@ pub fn generate_address() -> (Keypair, Address) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::Signer;
 
     #[test]
     fn test_address_generation() {

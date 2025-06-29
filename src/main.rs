@@ -18,18 +18,19 @@ use findag::core::tx_pool::ShardedTxPool;
 use findag::core::address::{Address, generate_address};
 use findag::core::types::{Transaction, Block, SerializableTransaction, SerializableBlock};
 use findag::dagtimer::findag_time_manager::FinDAGTimeManager;
-use findag::core::block_production_loop::run_block_production_loop;
+use findag::core::block_production_loop::{run_block_production_loop, BlockProductionConfig};
 use findag::network::propagation::{NetworkPropagator, GossipMsg};
 use findag::consensus::round_finalizer::RoundFinalizer;
 use findag::consensus::validator_set::ValidatorSet;
 use serde_json::json;
+use findag::tools::run_quorum_demo;
+use findag::tools::run_handle_wallet;
+use std::env;
 
 #[derive(Clone)]
 struct AppState {
     dag: Arc<Mutex<DagEngine>>,
     tx_pool: Arc<ShardedTxPool>,
-    time_manager: Arc<FinDAGTimeManager>,
-    keypair: Arc<Keypair>,
     address: Address,
     propagator: Arc<NetworkPropagator>,
 }
@@ -81,7 +82,50 @@ async fn get_dag(State(state): State<AppState>) -> Json<serde_json::Value> {
 
 #[tokio::main]
 async fn main() {
+    let args: Vec<String> = env::args().collect();
+    
+    // Handle CLI commands
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "quorum-demo" => {
+                println!("Running FinDAG Quorum Rotation Demo...\n");
+                run_quorum_demo();
+                return;
+            }
+            "handle-wallet" => {
+                println!("Running FinDAG Handle Wallet Demo...\n");
+                run_handle_wallet();
+                return;
+            }
+            "help" | "--help" | "-h" => {
+                println!("FinDAG - Permissioned Asset Tracking DAG Blockchain");
+                println!();
+                println!("Available commands:");
+                println!("  quorum-demo    - Run quorum rotation system demo");
+                println!("  handle-wallet  - Run handle wallet system demo");
+                println!("  help           - Show this help message");
+                println!("  (no args)      - Start FinDAG node");
+                println!();
+                println!("Examples:");
+                println!("  cargo run -- quorum-demo");
+                println!("  cargo run -- handle-wallet");
+                println!("  cargo run -- help");
+                println!("  cargo run --");
+                return;
+            }
+            _ => {
+                println!("Unknown command: {}", args[1]);
+                println!("Run 'cargo run -- help' for available commands");
+                return;
+            }
+        }
+    }
+
+    // Start FinDAG node
     println!("FinDAG node is starting...");
+
+    // Initialize metrics
+    findag::metrics::register_metrics();
 
     // --- Node identity ---
     let (keypair, address) = generate_address();
@@ -139,24 +183,26 @@ async fn main() {
     let propagator_clone = propagator.clone();
     tokio::spawn(async move {
         let (persist_tx, _persist_rx) = unbounded_channel();
-        let mut dag = dag_clone.lock().await;
-        let validator_set = ValidatorSet::new();
+        let mut validator_set = ValidatorSet::new();
         loop {
-            let round_finalizer = RoundFinalizer::dummy(&validator_set);
+            let round_finalizer = RoundFinalizer::dummy(&mut validator_set);
+            let config = BlockProductionConfig {
+                max_block_txs: 100,
+                interval_ms: 1000, // 1 block/sec for demo
+                shard_id: 0, // single-shard
+            };
             run_block_production_loop(
-                &mut dag,
+                &mut *dag_clone.lock().await,
                 &tx_pool_clone,
                 address_clone.clone(),
                 &keypair_clone,
-                100,
-                1000, // 1 block/sec for demo
+                config,
                 &time_manager_clone,
                 persist_tx.clone(),
-                0, // single-shard
                 round_finalizer,
             ).await;
             // After producing a block, broadcast it
-            if let Some(block) = dag.get_all_blocks().last() {
+            if let Some(block) = dag_clone.lock().await.get_all_blocks().last() {
                 let sblock: SerializableBlock = block.clone().into();
                 let msg = GossipMsg::NewBlock(sblock);
                 propagator_clone.broadcast(&msg).await;
@@ -164,17 +210,14 @@ async fn main() {
         }
     });
 
-    // --- App state ---
-    let state = AppState {
+    // --- HTTP API ---
+    let app_state = AppState {
         dag: dag.clone(),
         tx_pool: tx_pool.clone(),
-        time_manager: time_manager.clone(),
-        keypair: keypair.clone(),
         address: address.clone(),
         propagator: propagator.clone(),
     };
 
-    // --- API endpoints ---
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -182,16 +225,17 @@ async fn main() {
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/node/info", get(node_info))
-        .route("/transactions", post(submit_transaction))
+        .route("/node", get(node_info))
+        .route("/tx", post(submit_transaction))
         .route("/blocks", get(get_blocks))
         .route("/dag", get(get_dag))
         .layer(cors)
-        .with_state(state);
+        .with_state(app_state);
 
-    // --- Start HTTP server ---
-    let bind_addr = std::env::var("FINDAG_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    let listener = TcpListener::bind(&bind_addr).await.unwrap();
-    println!("HTTP server listening on http://{}", bind_addr);
+    let port = std::env::var("FINDAG_HTTP_PORT").unwrap_or_else(|_| "3000".to_string());
+    let addr = format!("0.0.0.0:{}", port);
+    println!("HTTP API listening on {}", addr);
+
+    let listener = TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 } 

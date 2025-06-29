@@ -224,7 +224,7 @@ impl TryFrom<SerializableRound> for Round {
     }
 }
 
-/// Supported asset codes for FinDAG, including Euroclear-relevant assets.
+/// Supported assets for transactions and balance queries
 pub const SUPPORTED_ASSETS: &[&str] = &[
     // Major fiat
     "EUR", "USD", "GBP", "JPY", "CHF", "SGD", "AED", "CNY",
@@ -262,4 +262,34 @@ impl Block {
             true
         }
     }
+}
+
+impl Transaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Transaction {{ from: {}, to: {}, amount: {}, hashtimer: {} }}", 
+            self.from.as_str(), 
+            self.to.as_str(), 
+            self.amount,
+            hex::encode(self.hashtimer)
+        )
+    }
+}
+
+/// Asset record for persistent storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetRecord {
+    pub asset_id: String,
+    pub owner: String,
+    pub status: String,        // "active", "pending", "unloaded"
+    pub amount: String,
+    pub history: Vec<AssetHistory>,
+}
+
+/// Asset history entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetHistory {
+    pub timestamp: String,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub action: String,        // "load", "transfer", "unload", "update"
 } 

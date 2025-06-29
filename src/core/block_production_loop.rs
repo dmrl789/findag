@@ -1,4 +1,4 @@
-use crate::core::block_producer::BlockProducer;
+use crate::core::block_producer::{BlockProducer, BlockProducerConfig};
 use crate::core::dag_engine::DagEngine;
 use crate::core::tx_pool::ShardedTxPool;
 use crate::core::address::Address;
@@ -13,17 +13,23 @@ use std::time::Instant;
 use crate::core::types::ShardId;
 use crate::consensus::round_finalizer::RoundFinalizer;
 
+/// Configuration for block production loop
+#[derive(Debug, Clone)]
+pub struct BlockProductionConfig {
+    pub max_block_txs: usize,
+    pub interval_ms: u64,
+    pub shard_id: u16,
+}
+
 /// Runs the block production loop for a specific shard
 pub async fn run_block_production_loop(
     dag: &mut DagEngine,
     tx_pool: &ShardedTxPool,
     proposer: Address,
     keypair: &Keypair,
-    max_block_txs: usize,
-    interval_ms: u64,
+    config: BlockProductionConfig,
     time_manager: &FinDAGTimeManager,
     persist_tx: UnboundedSender<PersistMsg>,
-    shard_id: u16,
     _round_finalizer: RoundFinalizer<'_>,
 ) {
     loop {
@@ -38,10 +44,12 @@ pub async fn run_block_production_loop(
             tx_pool,
             proposer.clone(),
             keypair,
-            max_block_txs,
-            interval_ms,
+            BlockProducerConfig {
+                max_txs_per_block: config.max_block_txs,
+                target_block_time_ms: config.interval_ms,
+                shard_id: ShardId(config.shard_id),
+            },
             time_manager,
-            ShardId(shard_id),
         );
         
         // Get real FinDAG Time
@@ -58,7 +66,7 @@ pub async fn run_block_production_loop(
         // Only fetch transactions for this shard
         let produced = block_producer.produce_block();
         if let Some(block) = produced {
-            println!("[Shard {}] Produced block: {:?} at FinDAG Time {}", shard_id, block.block_id, findag_time);
+            println!("[Shard {}] Produced block: {:?} at FinDAG Time {}", config.shard_id, block.block_id, findag_time);
             // TODO: Use round_finalizer for consensus/finality in this shard
             // Persist the block asynchronously
             let _ = persist_tx.send(PersistMsg::Block(block.clone()));
@@ -70,7 +78,7 @@ pub async fn run_block_production_loop(
             metrics::BLOCK_LATENCY.observe(block_start.elapsed().as_secs_f64());
             // metrics::PER_ASSET_TPS.with_label_values(&[&tx.currency]).inc();
         }
-        sleep(Duration::from_millis(interval_ms)).await;
+        sleep(Duration::from_millis(config.interval_ms)).await;
     }
 }
 

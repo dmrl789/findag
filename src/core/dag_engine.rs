@@ -1,37 +1,44 @@
-use crate::core::types::{Block, ShardId};
+use crate::core::types::{Block, Transaction, ShardId};
 use crate::core::address::Address;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use sha2::{Sha256, Digest};
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DAGVertex {
-    pub block_id: [u8; 32],
     pub block: Block,
     pub parents: Vec<[u8; 32]>,
-    pub children: Vec<[u8; 32]>,
-    pub depth: u64,
-    pub weight: u64,
-    pub is_tip: bool,
-    pub shard_id: ShardId,
+    pub timestamp: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct DAGStats {
+impl DAGVertex {
+    pub fn new(block: Block, parents: Vec<[u8; 32]>, timestamp: u64) -> Self {
+        Self {
+            block,
+            parents,
+            timestamp,
+        }
+    }
+}
+
+/// DAG statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagStats {
     pub total_blocks: usize,
-    pub tip_blocks: usize,
-    pub max_depth: u64,
-    pub avg_parents: f64,
-    pub avg_children: f64,
+    pub tips_count: usize,
+    pub max_depth: usize,
+    pub avg_txs_per_block: f64,
 }
 
+/// DAG engine for managing the directed acyclic graph of blocks
 pub struct DagEngine {
     vertices: Arc<Mutex<HashMap<[u8; 32], DAGVertex>>>,
     tips: Arc<Mutex<HashSet<[u8; 32]>>>,
     genesis_blocks: Arc<Mutex<Vec<[u8; 32]>>>,
     max_depth: u64,
     shard_tips: Arc<Mutex<HashMap<ShardId, Vec<[u8; 32]>>>>,
+    stats: Arc<Mutex<DagStats>>,
 }
 
 impl DagEngine {
@@ -42,8 +49,15 @@ impl DagEngine {
             genesis_blocks: Arc::new(Mutex::new(Vec::new())),
             max_depth: 0,
             shard_tips: Arc::new(Mutex::new(HashMap::new())),
+            stats: Arc::new(Mutex::new(DagStats {
+                total_blocks: 0,
+                tips_count: 0,
+                max_depth: 0,
+                avg_txs_per_block: 0.0,
+            })),
         };
         engine.create_genesis_blocks();
+        engine.update_stats();
         engine
     }
 
@@ -54,22 +68,12 @@ impl DagEngine {
             self.create_genesis_block(ShardId(2)),
         ];
         for genesis_block in genesis_blocks {
-            let block_id = genesis_block.block_id;
-            let vertex = DAGVertex {
-                block_id,
-                block: genesis_block,
-                parents: Vec::new(),
-                children: Vec::new(),
-                depth: 0,
-                weight: 1,
-                is_tip: true,
-                shard_id: ShardId(0),
-            };
-            self.vertices.lock().unwrap().insert(block_id, vertex);
-            self.tips.lock().unwrap().insert(block_id);
-            self.genesis_blocks.lock().unwrap().push(block_id);
+            let vertex = DAGVertex::new(genesis_block.clone(), Vec::new(), 0);
+            self.vertices.lock().unwrap().insert(genesis_block.block_id, vertex);
+            self.tips.lock().unwrap().insert(genesis_block.block_id);
+            self.genesis_blocks.lock().unwrap().push(genesis_block.block_id);
             let mut shard_tips = self.shard_tips.lock().unwrap();
-            shard_tips.entry(ShardId(0)).or_default().push(block_id);
+            shard_tips.entry(ShardId(0)).or_default().push(genesis_block.block_id);
         }
     }
 
@@ -94,70 +98,73 @@ impl DagEngine {
         }
     }
 
-    pub fn add_block(&mut self, block: Block) -> Result<(), String> {
-        let block_id = block.block_id;
-        if self.vertices.lock().unwrap().contains_key(&block_id) {
-            return Err("Block already exists in DAG.".to_string());
-        }
-        for parent_id in &block.parent_blocks {
-            if !self.vertices.lock().unwrap().contains_key(parent_id) {
-                return Err(format!("Parent block not found in DAG: {:?}", parent_id));
-            }
-        }
-        let depth = self.calculate_depth(&block.parent_blocks);
-        let weight = self.calculate_weight(&block.parent_blocks) + 1;
-        let vertex = DAGVertex {
-            block_id,
-            block: block.clone(),
-            parents: block.parent_blocks.clone(),
-            children: Vec::new(),
-            depth,
-            weight,
-            is_tip: true,
-            shard_id: block.shard_id,
-        };
+    /// Add a new block to the DAG
+    pub fn add_block(&self, block: Block) -> Result<(), String> {
+        let block_id = self.compute_block_id(&block);
+        let parents = self.select_parents(&block_id);
+        let timestamp = self.get_current_timestamp();
+        
+        let vertex = DAGVertex::new(block, parents, timestamp);
+        
         let mut vertices = self.vertices.lock().unwrap();
-        for parent_id in &block.parent_blocks {
-            if let Some(parent_vertex) = vertices.get_mut(parent_id) {
-                parent_vertex.children.push(block_id);
-                parent_vertex.is_tip = false;
-            }
-        }
         vertices.insert(block_id, vertex);
+        
         let mut tips = self.tips.lock().unwrap();
         tips.insert(block_id);
-        let mut shard_tips = self.shard_tips.lock().unwrap();
-        shard_tips.entry(block.shard_id).or_default().push(block_id);
-        self.max_depth = self.max_depth.max(depth);
+        
         Ok(())
     }
 
-    fn calculate_depth(&self, parent_blocks: &[[u8; 32]]) -> u64 {
-        if parent_blocks.is_empty() {
-            return 0;
-        }
-        let vertices = self.vertices.lock().unwrap();
-        parent_blocks.iter()
-            .filter_map(|parent_id| vertices.get(parent_id))
-            .map(|vertex| vertex.depth)
-            .max()
-            .unwrap_or(0) + 1
-    }
-
-    fn calculate_weight(&self, parent_blocks: &[[u8; 32]]) -> u64 {
-        if parent_blocks.is_empty() {
-            return 0;
-        }
-        let vertices = self.vertices.lock().unwrap();
-        parent_blocks.iter()
-            .filter_map(|parent_id| vertices.get(parent_id))
-            .map(|vertex| vertex.weight)
-            .sum()
-    }
-
+    /// Get all tip blocks (blocks with no children)
     pub fn get_tips(&self) -> Vec<[u8; 32]> {
-        self.tips.lock().unwrap().iter().cloned().collect()
+        let tips = self.tips.lock().unwrap();
+        tips.iter().copied().collect()
     }
+
+    /// Get all blocks in the DAG
+    pub fn get_all_blocks(&self) -> Vec<Block> {
+        let vertices = self.vertices.lock().unwrap();
+        vertices.values().map(|vertex| vertex.block.clone()).collect()
+    }
+
+    /// Get block count
+    pub fn block_count(&self) -> usize {
+        let vertices = self.vertices.lock().unwrap();
+        vertices.len()
+    }
+
+    /// Get DAG statistics
+    pub fn get_stats(&self) -> DagStats {
+        let stats = self.stats.lock().unwrap();
+        stats.clone()
+    }
+
+    /// Update DAG statistics
+    fn update_stats(&mut self) {
+        let vertices = self.vertices.lock().unwrap();
+        let tips = self.tips.lock().unwrap();
+        
+        let total_blocks = vertices.len();
+        let tips_count = tips.len();
+        
+        // Calculate average transactions per block
+        let total_txs: usize = vertices.values().map(|vertex| vertex.block.transactions.len()).sum();
+        let avg_txs_per_block = if total_blocks > 0 {
+            total_txs as f64 / total_blocks as f64
+        } else {
+            0.0
+        };
+
+        // Calculate max depth (simplified - could be improved with proper depth calculation)
+        let max_depth = total_blocks; // Placeholder
+
+        let mut stats = self.stats.lock().unwrap();
+        stats.total_blocks = total_blocks;
+        stats.tips_count = tips_count;
+        stats.max_depth = max_depth;
+        stats.avg_txs_per_block = avg_txs_per_block;
+    }
+
     pub fn get_shard_tips(&self, shard_id: ShardId) -> Vec<[u8; 32]> {
         self.shard_tips.lock().unwrap()
             .get(&shard_id)
@@ -169,57 +176,6 @@ impl DagEngine {
             .get(block_id)
             .map(|vertex| vertex.block.clone())
     }
-    pub fn get_blocks_at_depth(&self, depth: u64) -> Vec<Block> {
-        self.vertices.lock().unwrap()
-            .values()
-            .filter(|vertex| vertex.depth == depth)
-            .map(|vertex| vertex.block.clone())
-            .collect()
-    }
-    pub fn get_heaviest_chain(&self) -> Option<Vec<[u8; 32]>> {
-        let vertices = self.vertices.lock().unwrap();
-        let mut chain = Vec::new();
-        let mut current_tip = self.tips.lock().unwrap()
-            .iter()
-            .filter_map(|tip_id| vertices.get(tip_id))
-            .max_by_key(|vertex| vertex.weight)
-            .map(|vertex| vertex.block_id);
-        while let Some(tip_id) = current_tip {
-            chain.push(tip_id);
-            let parents = vertices.get(&tip_id).map(|v| v.parents.clone()).unwrap_or_default();
-            if parents.is_empty() {
-                break;
-            }
-            current_tip = parents.into_iter().next();
-        }
-        if chain.is_empty() {
-            None
-        } else {
-            Some(chain)
-        }
-    }
-    pub fn get_all_blocks(&self) -> Vec<Block> {
-        self.vertices.lock().unwrap().values().map(|v| v.block.clone()).collect()
-    }
-    pub fn block_count(&self) -> usize {
-        self.vertices.lock().unwrap().len()
-    }
-    pub fn max_depth(&self) -> u64 {
-        self.max_depth
-    }
-    pub fn is_confirmed(&self, block_id: &[u8; 32], confirmation_threshold: u64) -> bool {
-        self.vertices.lock().unwrap().contains_key(block_id) && confirmation_threshold > 0
-    }
-    pub fn get_confirmed_blocks(&self, _confirmation_threshold: u64) -> Vec<Block> {
-        // TODO: Implement confirmation logic
-        self.get_all_blocks()
-    }
-    pub fn get_children(&self, block_id: &[u8; 32]) -> Vec<Block> {
-        let vertices = self.vertices.lock().unwrap();
-        vertices.get(block_id)
-            .map(|v| v.children.iter().filter_map(|c| vertices.get(c).map(|v| v.block.clone())).collect())
-            .unwrap_or_default()
-    }
     pub fn get_parents(&self, block_id: &[u8; 32]) -> Vec<Block> {
         let vertices = self.vertices.lock().unwrap();
         vertices.get(block_id)
@@ -229,32 +185,47 @@ impl DagEngine {
     pub fn topological_sort(&self) -> Vec<[u8; 32]> {
         self.vertices.lock().unwrap().keys().cloned().collect()
     }
-    pub fn get_stats(&self) -> DAGStats {
-        let vertices = self.vertices.lock().unwrap();
-        let total_blocks = vertices.len();
-        let tip_blocks = self.tips.lock().unwrap().len();
-        let max_depth = self.max_depth;
-        let mut total_parents = 0;
-        let mut total_children = 0;
-        for v in vertices.values() {
-            total_parents += v.parents.len();
-            total_children += v.children.len();
-        }
-        let avg_parents = if total_blocks > 0 { total_parents as f64 / total_blocks as f64 } else { 0.0 };
-        let avg_children = if total_blocks > 0 { total_children as f64 / total_blocks as f64 } else { 0.0 };
-        DAGStats {
-            total_blocks,
-            tip_blocks,
-            max_depth,
-            avg_parents,
-            avg_children,
-        }
-    }
     pub fn add_round(&mut self, _round: crate::core::types::Round) {
         // TODO: Implement round addition logic
     }
     pub fn block_tips(&self) -> Vec<&crate::core::types::Block> {
         // TODO: Return block tips if needed
         vec![]
+    }
+
+    fn compute_block_id(&self, block: &Block) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(&block.shard_id.0.to_be_bytes());
+        hasher.update(&block.findag_time.to_be_bytes());
+        hasher.update(&block.hashtimer);
+        for tx in &block.transactions {
+            hasher.update(&tx.from.0.as_bytes());
+            hasher.update(&tx.to.0.as_bytes());
+            hasher.update(&tx.amount.to_be_bytes());
+        }
+        let result = hasher.finalize();
+        let mut block_id = [0u8; 32];
+        block_id.copy_from_slice(&result);
+        block_id
+    }
+
+    fn select_parents(&self, _block_id: &[u8; 32]) -> Vec<[u8; 32]> {
+        // Simple parent selection - use all current tips
+        let tips = self.tips.lock().unwrap();
+        tips.iter().copied().collect()
+    }
+
+    fn get_current_timestamp(&self) -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+}
+
+impl Default for DagEngine {
+    fn default() -> Self {
+        Self::new()
     }
 } 

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::io::{self, Write};
 use hex;
-use core::address::{Address, generate_address};
+use crate::core::address::{Address, generate_address};
 use serde::{Serialize, Deserialize};
 use reqwest;
 
