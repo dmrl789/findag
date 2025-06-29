@@ -4,8 +4,6 @@ use std::sync::{Arc, Mutex};
 use crate::storage::state::StateDB;
 use crate::metrics;
 
-const SHARD_COUNT: usize = 16;
-
 /// Transaction Pool (Mempool) for FinDAG
 /// - Deduplicates by transaction hash
 /// - Prioritizes by FinDAG Time (oldest first)
@@ -39,7 +37,7 @@ impl TxPool {
             // Phase 1: Lock/prepare on source shard
             // Phase 2: Commit/acknowledge on destination shard
             // Finalize and update state on both shards
-            println!("[TxPool] Received cross-shard tx: {:?} -> {:?}", source, dest);
+            println!("[TxPool] Received cross-shard tx: {source:?} -> {dest:?}");
             // For now, reject or queue cross-shard txs
             return false;
         }
@@ -63,7 +61,7 @@ impl TxPool {
         let asset = "USD"; // Default asset for now
         let whitelist = self.asset_whitelist.lock().unwrap();
         if !whitelist.contains(&asset.to_string()) {
-            println!("[TxPool] Rejected tx: unsupported asset '{}'.", asset);
+            println!("[TxPool] Rejected tx: unsupported asset '{asset}'.");
             metrics::ERROR_COUNT.with_label_values(&["unsupported_asset"]).inc();
             return false;
         }
@@ -72,7 +70,7 @@ impl TxPool {
         let amount = tx.amount;
         let bal = self.state_db.get_balance(tx.shard_id.0, from, asset);
         if bal < amount {
-            println!("[TxPool] Rejected tx: insufficient funds for {} ({} {})", from, amount, asset);
+            println!("[TxPool] Rejected tx: insufficient funds for {from} ({amount} {asset})");
             metrics::ERROR_COUNT.with_label_values(&["insufficient_funds"]).inc();
             return false;
         }
@@ -101,7 +99,7 @@ impl TxPool {
     /// Get transactions for block production (oldest first, up to a limit)
     pub fn get_transactions(&self, limit: usize) -> Vec<&Transaction> {
         let mut result = Vec::with_capacity(limit);
-        for (_time, hashes) in &self.time_index {
+        for hashes in self.time_index.values() {
             for hash in hashes {
                 if let Some(tx) = self.transactions.get(hash) {
                     result.push(tx);

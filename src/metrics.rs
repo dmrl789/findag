@@ -1,4 +1,4 @@
-use prometheus::{Counter, Gauge, Histogram, HistogramOpts, IntCounter, IntGauge, IntCounterVec, Registry};
+use prometheus::{Histogram, HistogramOpts, IntCounter, IntGauge, IntCounterVec, Registry};
 use std::sync::Once;
 use lazy_static::lazy_static;
 use prometheus::TextEncoder;

@@ -8,4 +8,6 @@ pub mod identity;
 pub mod round_checkpoint_loop;
 pub mod tx_pool;
 pub mod types;
+pub mod wallet;
+pub mod handle_registry;
 // pub mod consensus; // Removed, consensus is not a submodule of core 

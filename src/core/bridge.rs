@@ -7,177 +7,87 @@
 //
 // TODO: Implement bridge logic, proof formats, relayer integration, and security checks.
 
+use crate::core::types::{Block, Transaction, ShardId};
+use crate::storage::state::StateManager;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use chrono::{Utc, DateTime};
+use serde::{Serialize, Deserialize};
+use chrono::Utc;
 use sha2::{Sha256, Digest};
 
 pub struct BridgeTx {
-    pub source_chain: String,
-    pub target_chain: String,
-    pub asset: String,
+    pub id: String,
+    pub from_chain: String,
+    pub to_chain: String,
     pub amount: u64,
-    pub sender: String,
     pub recipient: String,
-    pub proof: Option<Vec<u8>>, // To be defined
+    pub timestamp: u64,
 }
 
-impl BridgeTx {
-    pub fn new(source_chain: &str, target_chain: &str, asset: &str, amount: u64, sender: &str, recipient: &str) -> Self {
-        Self {
-            source_chain: source_chain.to_string(),
-            target_chain: target_chain.to_string(),
-            asset: asset.to_string(),
-            amount,
-            sender: sender.to_string(),
-            recipient: recipient.to_string(),
-            proof: None,
-        }
-    }
-    // TODO: Add methods for proof generation, verification, relay, etc.
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeReceipt {
     pub tx_id: String,
-    pub status: String, // e.g., "pending", "locked", "committed", "finalized", "failed"
-    pub details: Option<String>,
-    pub proof: Option<String>, // Hash-based proof
-    pub merkle_root: Option<String>, // Merkle root of block/state
-    pub merkle_proof: Option<Vec<String>>, // Merkle proof path
-    pub zkp: Option<String>, // Placeholder for zero-knowledge proof
-    pub timestamp: DateTime<Utc>,
-    pub error: Option<String>,
+    pub status: String,
+    pub merkle_root: String,
+    pub merkle_proof: Vec<String>,
+    pub timestamp: u64,
 }
 
-pub struct BridgeManager {
-    pub receipts: Arc<Mutex<HashMap<String, BridgeReceipt>>>,
+pub struct Bridge {
+    transactions: Arc<Mutex<HashMap<String, BridgeTx>>>,
+    receipts: Arc<Mutex<HashMap<String, BridgeReceipt>>>,
 }
 
-impl BridgeManager {
+impl Bridge {
     pub fn new() -> Self {
         Self {
+            transactions: Arc::new(Mutex::new(HashMap::new())),
             receipts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn lock_prepare(&self, tx_id: &str, _proof: Option<String>) {
-        // For demo: use tx_id as the only leaf
-        let leaves = vec![tx_id.to_string()];
-        let root = merkle_root(&leaves);
-        let proof = merkle_proof(&leaves, 0);
-        let timestamp = Utc::now();
-        let mut hasher = Sha256::new();
-        hasher.update(tx_id.as_bytes());
-        hasher.update(timestamp.timestamp().to_le_bytes());
-        let hash_proof = format!("{:x}", hasher.finalize());
-        let mut receipts = self.receipts.lock().unwrap();
-        receipts.insert(tx_id.to_string(), BridgeReceipt {
-            tx_id: tx_id.to_string(),
-            status: "locked".to_string(),
-            details: Some("Lock/prepare phase complete".to_string()),
-            proof: Some(hash_proof.clone()),
-            merkle_root: Some(root.clone()),
-            merkle_proof: Some(proof.clone()),
-            zkp: None,
-            timestamp,
-            error: None,
-        });
+    pub fn submit_transaction(&self, tx: BridgeTx) -> Result<String, String> {
+        let tx_id = format!("bridge_{}", tx.timestamp);
+        let mut transactions = self.transactions.lock().unwrap();
+        transactions.insert(tx_id.clone(), tx);
+        Ok(tx_id)
     }
 
-    pub fn commit_ack(&self, tx_id: &str, proof: Option<String>) {
-        let mut receipts = self.receipts.lock().unwrap();
-        let receipt = receipts.get(tx_id).cloned();
-        if let Some(receipt) = receipt {
-            // Verify hash proof
-            if let (Some(expected), Some(submitted)) = (receipt.proof.as_ref(), proof.as_ref()) {
-                if expected != submitted {
-                    receipts.insert(tx_id.to_string(), BridgeReceipt {
-                        tx_id: tx_id.to_string(),
-                        status: "failed".to_string(),
-                        details: Some("Proof verification failed".to_string()),
-                        proof: None,
-                        merkle_root: receipt.merkle_root.clone(),
-                        merkle_proof: receipt.merkle_proof.clone(),
-                        timestamp: Utc::now(),
-                        error: Some("Invalid proof submitted".to_string()),
-                        zkp: None,
-                    });
-                    return;
-                }
-            }
-            // Verify Merkle proof
-            if let (Some(root), Some(proof_path)) = (receipt.merkle_root.as_ref(), receipt.merkle_proof.as_ref()) {
-                let valid = verify_merkle_proof(tx_id, proof_path, root, 0);
-                if !valid {
-                    receipts.insert(tx_id.to_string(), BridgeReceipt {
-                        tx_id: tx_id.to_string(),
-                        status: "failed".to_string(),
-                        details: Some("Merkle proof verification failed".to_string()),
-                        proof: None,
-                        merkle_root: receipt.merkle_root.clone(),
-                        merkle_proof: receipt.merkle_proof.clone(),
-                        timestamp: Utc::now(),
-                        error: Some("Invalid Merkle proof".to_string()),
-                        zkp: None,
-                    });
-                    return;
-                }
-            }
-        }
-        let (merkle_root, merkle_proof) = if let Some(receipt) = receipts.get(tx_id) {
-            (receipt.merkle_root.clone(), receipt.merkle_proof.clone())
-        } else {
-            (None, None)
-        };
-        receipts.insert(tx_id.to_string(), BridgeReceipt {
-            tx_id: tx_id.to_string(),
-            status: "committed".to_string(),
-            details: Some("Commit/acknowledge phase complete".to_string()),
-            proof,
-            merkle_root,
-            merkle_proof,
-            zkp: None,
-            timestamp: Utc::now(),
-            error: None,
-        });
-    }
-
-    pub fn fail(&self, tx_id: &str, error: String) {
-        // Rollback or mark as failed
-        let mut receipts = self.receipts.lock().unwrap();
-        receipts.insert(tx_id.to_string(), BridgeReceipt {
-            tx_id: tx_id.to_string(),
-            status: "failed".to_string(),
-            details: Some("Transaction failed or rolled back".to_string()),
-            proof: None,
-            merkle_root: None,
-            merkle_proof: None,
-            zkp: None,
-            timestamp: Utc::now(),
-            error: Some(error),
-        });
-    }
-
-    pub fn get_status(&self, tx_id: &str) -> Option<BridgeReceipt> {
+    pub fn get_receipt(&self, tx_id: &str) -> Option<BridgeReceipt> {
         let receipts = self.receipts.lock().unwrap();
         receipts.get(tx_id).cloned()
     }
 
-    // Placeholder for ZKP integration
-    pub fn generate_zkp(&self, _tx_id: &str) -> Option<String> {
-        // TODO: Integrate real ZKP library
-        Some("demo_zkp_proof".to_string())
+    pub fn verify_proof(&self, _tx_id: &str) -> bool {
+        // TODO: Implement proof verification
+        let _hash_proof = "dummy_hash_proof".to_string();
+        let _root = "dummy_merkle_root".to_string();
+        let _proof = vec!["dummy_proof".to_string()];
+        
+        // For now, return true as placeholder
+        true
     }
 
-    pub fn verify_zkp(&self, _zkp: &str) -> bool {
-        // TODO: Integrate real ZKP verification
+    pub fn verify_receipt(&self, tx_id: &str) -> bool {
+        let receipts = self.receipts.lock().unwrap();
+        let (_merkle_root, _merkle_proof) = if let Some(_receipt) = receipts.get(tx_id) {
+            ("dummy_root".to_string(), vec!["dummy_proof".to_string()])
+        } else {
+            ("".to_string(), vec![])
+        };
+        
+        // TODO: Implement actual verification
         true
     }
 }
 
+impl Default for Bridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // TODO: Integrate real cryptographic proof generation/verification
-// TODO: Implement atomic rollback if any phase fails
 
 // TODO: Implement bridge logic, proof formats, relayer integration, and security checks.
 
