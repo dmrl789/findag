@@ -458,6 +458,32 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
   - Immutable audit trail with timestamps and finality proofs
   - Support for complex ownership structures and compliance requirements
 
+## Transaction Flow and Block Production (2024-06 Update)
+
+### Transaction Submission
+- Transactions must be submitted to the node's `/tx` endpoint as signed JSON objects.
+- Required fields: `payload`, `findag_time`, `hashtimer`, `public_key`, `shard_id`, and `signature` (all cryptographic fields as byte arrays).
+- The node verifies the signature and adds valid transactions to the mempool.
+
+### Mempool Draining
+- The mempool is implemented as a thread-safe queue (Tokio Mutex).
+- The `BlockProducer` periodically drains up to N transactions from the mempool using a `take_up_to` method.
+- Transactions are atomically removed from the mempool and included in the next block.
+
+### Block Production
+- Each block must include all drained transactions from the mempool.
+- Block structure includes: `transactions`, `payload` (serialized transactions), `findag_time`, `hashtimer`, and other consensus fields.
+- The node logs the number of transactions included in each block. Blocks with zero transactions indicate a problem in the mempool draining or transaction submission logic.
+
+### Error Handling
+- The node returns detailed JSON error messages for invalid transaction submissions (e.g., signature mismatch, missing fields).
+- The transaction bot should print full error responses for debugging.
+
+### Requirements
+- Blocks must not be produced with zero transactions if the mempool is non-empty.
+- Transaction format between bot and node must match exactly.
+- The system must support high-throughput transaction submission and block production.
+
 ---
 
 ## 5. Production Readiness Status

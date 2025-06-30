@@ -9,14 +9,18 @@ use axum::{
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::Mutex;
-use ed25519_dalek::Keypair;
+use ed25519_dalek::{Keypair, Signer, Verifier};
 use std::net::SocketAddr;
 use tower_http::cors::{CorsLayer, Any};
+use serde::{Serialize, Deserialize};
+use rand::Rng;
+use hex;
+use base64::Engine;
 
 use findag::core::dag_engine::DagEngine;
 use findag::core::tx_pool::ShardedTxPool;
 use findag::core::address::{Address, generate_address};
-use findag::core::types::{Transaction, Block, SerializableTransaction, SerializableBlock};
+use findag::core::types::{Transaction, Block, SerializableTransaction, SerializableBlock, ShardId};
 use findag::dagtimer::findag_time_manager::FinDAGTimeManager;
 use findag::dagtimer::hashtimer::compute_hashtimer;
 use findag::core::block_production_loop::{run_block_production_loop, BlockProductionConfig};
@@ -33,10 +37,32 @@ use std::env;
 struct AppState {
     dag: Arc<Mutex<DagEngine>>,
     tx_pool: Arc<ShardedTxPool>,
-    mempool: Arc<Mempool>,
+    mempool: Arc<Mutex<Mempool>>,
     address: Address,
     propagator: Arc<NetworkPropagator>,
     time_manager: Arc<FinDAGTimeManager>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct ApiTransaction {
+    pub from: String,
+    pub to: String,
+    pub amount: u64,
+    pub currency: String,
+    pub shard_id: Option<u16>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct TransactionRequest {
+    pub from: String,
+    pub to: String,
+    pub amount: u64,
+    pub signature: Vec<u8>,
+    pub payload: Vec<u8>,
+    pub findag_time: u64,
+    pub hashtimer: Vec<u8>,
+    pub public_key: Vec<u8>,
+    pub shard_id: u16,
 }
 
 async fn health() -> StatusCode {
@@ -57,20 +83,66 @@ async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
 #[debug_handler]
 async fn submit_transaction(
     State(state): State<AppState>, 
-    Json(tx): Json<Transaction>
-) -> StatusCode {
-    // Add to both tx_pool and mempool
-    let added_to_pool = state.tx_pool.add_transaction(tx.clone());
-    let _ = state.mempool.add(tx.clone()).await;
+    Json(req): Json<TransactionRequest>
+) -> (StatusCode, Json<serde_json::Value>) {
+    // Parse and validate the transaction
+    let tx = match parse_and_validate_transaction(&req) {
+        Ok(tx) => tx,
+        Err(e) => {
+            eprintln!("Rejecting tx: {}", e);
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+        }
+    };
+
+    // Add to mempool (async)
+    state.mempool.lock().await.add(tx).await;
+    println!("Added transaction to mempool: from={}, to={}, amount={}", req.from, req.to, req.amount);
+    (StatusCode::OK, Json(json!({"status": "ok"})))
+}
+
+fn parse_and_validate_transaction(req: &TransactionRequest) -> Result<Transaction, String> {
+    // Parse public key from bytes
+    let public_key = ed25519_dalek::PublicKey::from_bytes(&req.public_key)
+        .map_err(|_| "Invalid public key format".to_string())?;
+
+    // Parse signature from bytes
+    let signature = ed25519_dalek::Signature::from_bytes(&req.signature)
+        .map_err(|_| "Invalid signature format".to_string())?;
+
+    // Create canonical message to verify
+    let message = format!("{}{}{}", req.from, req.to, req.amount);
     
-    if added_to_pool {
-        let stx: SerializableTransaction = tx.into();
-        let msg = GossipMsg::NewTransaction(stx);
-        state.propagator.broadcast(&msg).await;
-        StatusCode::OK
-    } else {
-        StatusCode::BAD_REQUEST
+    // Verify signature
+    if public_key.verify(message.as_bytes(), &signature).is_err() {
+        return Err("Invalid signature".to_string());
     }
+
+    // Create the transaction
+    let tx = Transaction {
+        from: Address(req.from.clone()),
+        to: Address(req.to.clone()),
+        amount: req.amount,
+        payload: req.payload.clone(),
+        findag_time: req.findag_time,
+        hashtimer: {
+            let mut ht = [0u8; 32];
+            if req.hashtimer.len() >= 32 {
+                ht.copy_from_slice(&req.hashtimer[..32]);
+            } else {
+                ht[..req.hashtimer.len()].copy_from_slice(&req.hashtimer);
+            }
+            ht
+        },
+        signature,
+        public_key,
+        shard_id: ShardId(req.shard_id),
+        source_shard: None,
+        dest_shard: None,
+        target_chain: None,
+        bridge_protocol: None,
+    };
+
+    Ok(tx)
 }
 
 #[debug_handler]
@@ -103,7 +175,7 @@ async fn get_hashtimer_status(State(state): State<AppState>) -> Json<serde_json:
 
 #[debug_handler]
 async fn get_mempool_status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mempool_len = state.mempool.len().await;
+    let mempool_len = state.mempool.lock().await.len().await;
     let tx_pool_size = state.tx_pool.size(0);
     Json(json!({
         "mempool_size": mempool_len,
@@ -172,7 +244,7 @@ async fn main() {
     let tx_pool = Arc::new(ShardedTxPool::new_with_whitelist_per_shard(100_000, asset_whitelist, 1));
 
     // --- New Mempool ---
-    let mempool = Arc::new(Mempool::new());
+    let mempool = Arc::new(Mutex::new(Mempool::new()));
 
     // --- Time manager ---
     let time_manager = Arc::new(FinDAGTimeManager::new());
@@ -249,7 +321,7 @@ async fn main() {
             run_block_production_loop(
                 &mut *dag_clone.lock().await,
                 &tx_pool_clone,
-                &mempool_clone,
+                mempool_clone.clone(),
                 address_clone.clone(),
                 &keypair_clone,
                 config,
@@ -271,7 +343,7 @@ async fn main() {
     let app_state = AppState {
         dag: dag.clone(),
         tx_pool: tx_pool.clone(),
-        mempool: Arc::new(Mempool::new()),
+        mempool: Arc::new(Mutex::new(Mempool::new())),
         address: address.clone(),
         propagator: propagator.clone(),
         time_manager: time_manager.clone(),

@@ -78,9 +78,9 @@ impl StateDB {
         Self { db }
     }
 
-    /// Get balance for an account on a specific shard
+    /// Get balance for an account on a specific shard and asset
     pub fn get_balance(&self, shard_id: u16, address: &str, asset: &str) -> u64 {
-        let key = format!("state:{shard_id}:{address}");
+        let key = format!("state:{shard_id}:{address}:{asset}");
         if let Ok(Some(value)) = self.db.get(key) {
             if let Ok(balance) = String::from_utf8(value.to_vec()) {
                 balance.parse::<u64>().unwrap_or(0)
@@ -93,8 +93,8 @@ impl StateDB {
     }
 
     /// Set balance for an account on a specific shard
-    pub fn set_balance(&self, shard_id: u16, address: &str, balance: u64) -> Result<(), String> {
-        let key = format!("state:{shard_id}:{address}");
+    pub fn set_balance(&self, shard_id: u16, address: &str, asset: &str, balance: u64) -> Result<(), String> {
+        let key = format!("state:{shard_id}:{address}:{asset}");
         let value = balance.to_string();
         self.db.insert(key, value.as_bytes())
             .map_err(|e| format!("Failed to set balance: {}", e))?;
@@ -110,8 +110,8 @@ impl StateDB {
 
         let to_balance = self.get_balance(shard_id, to, asset);
         
-        self.set_balance(shard_id, from, from_balance - amount)?;
-        self.set_balance(shard_id, to, to_balance + amount)?;
+        self.set_balance(shard_id, from, asset, from_balance - amount)?;
+        self.set_balance(shard_id, to, asset, to_balance + amount)?;
         
         Ok(())
     }
@@ -127,11 +127,11 @@ impl StateDB {
         }
         
         // For now, simple transfer. In production, implement proper two-phase commit
-        self.set_balance(source, from, source_balance - amount)?;
+        self.set_balance(source, from, asset, source_balance - amount)?;
         
         // Phase 2: Credit funds on destination shard
         let dest_balance = self.get_balance(dest, to, asset);
-        self.set_balance(dest, to, dest_balance + amount)?;
+        self.set_balance(dest, to, asset, dest_balance + amount)?;
         
         Ok(())
     }

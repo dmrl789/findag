@@ -28,6 +28,7 @@ use axum::http::StatusCode;
 use crate::core::tx_pool::ShardedTxPool;
 use crate::core::types::SerializableTransaction;
 use crate::network::propagation::NetworkPropagator;
+use rand;
 
 static mut VALIDATOR_SET: Option<Arc<Mutex<ValidatorSet>>> = None;
 static mut STORAGE: Option<Arc<crate::storage::persistent::PersistentStorage>> = None;
@@ -46,6 +47,19 @@ pub struct ApiTransaction {
     pub currency: String,
     pub shard_id: Option<u16>, // Optional for API, default to 0
     // ... other fields ...
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SignedTransactionRequest {
+    pub from: String,
+    pub to: String,
+    pub amount: u64,
+    pub signature: Vec<u8>,
+    pub payload: Vec<u8>,
+    pub findag_time: u64,
+    pub hashtimer: Vec<u8>,
+    pub public_key: Vec<u8>,
+    pub shard_id: u16,
 }
 
 #[derive(Deserialize)]
@@ -125,48 +139,142 @@ async fn get_balance(Path((address, asset)): Path<(String, String)>, Query(param
     Json(serde_json::json!({ "address": address, "asset": asset, "balance": balance, "shard_id": shard_id }))
 }
 
-/// POST /tx (accepts optional shard_id in JSON)
-async fn post_tx(Json(tx): Json<ApiTransaction>) -> Json<serde_json::Value> {
+/// POST /tx (accepts both simple ApiTransaction and signed SignedTransactionRequest)
+async fn post_tx(Json(tx_data): Json<serde_json::Value>) -> Json<serde_json::Value> {
     metrics::API_CALLS.with_label_values(&["/tx"]).inc();
-    let storage = unsafe { STORAGE.as_ref().unwrap() };
-    let whitelist = storage.load_asset_whitelist().unwrap_or_default();
-    if !whitelist.contains(&tx.currency) {
-        metrics::ERROR_COUNT.with_label_values(&["unsupported_asset"]).inc();
-        return Json(serde_json::json!({ "error": format!("'{}' is not a supported asset", tx.currency) }));
-    }
-    let shard_id = tx.shard_id.unwrap_or(0);
     
-    // Convert ApiTransaction to core Transaction
-    let core_tx = Transaction {
-        from: Address(tx.from.clone()),
-        to: Address(tx.to.clone()),
-        amount: tx.amount,
-        payload: vec![], // Empty payload for simple transfers
-        findag_time: 0, // Will be set by the system
-        hashtimer: [0u8; 32], // Will be computed by the system
-        signature: [0u8; 64], // Will be set by the system
-        shard_id: ShardId(shard_id),
-        source_shard: None,
-        dest_shard: None,
-    };
-    
-    // Add to transaction pool
-    let tx_pool = unsafe { TX_POOL.as_ref().unwrap() };
-    let added = tx_pool.add_transaction(core_tx.clone());
-    
-    if added {
-        // Broadcast to network
-        if let Some(propagator) = unsafe { NETWORK_PROPAGATOR.as_ref() } {
-            let stx: SerializableTransaction = core_tx.into();
-            let msg = crate::network::propagation::GossipMsg::NewTransaction(stx);
-            propagator.broadcast(&msg).await;
+    // Try to parse as signed transaction first
+    if let Ok(signed_tx) = serde_json::from_value::<SignedTransactionRequest>(tx_data.clone()) {
+        println!("Received signed transaction: from={}, to={}, amount={}", 
+                signed_tx.from, signed_tx.to, signed_tx.amount);
+        
+        // Validate signature
+        let message = format!("{}{}{}", signed_tx.from, signed_tx.to, signed_tx.amount);
+        let public_key = match ed25519_dalek::PublicKey::from_bytes(&signed_tx.public_key) {
+            Ok(pk) => pk,
+            Err(_) => {
+                println!("Invalid public key format");
+                return Json(serde_json::json!({ "error": "Invalid public key format" }));
+            }
+        };
+        
+        let signature = match ed25519_dalek::Signature::from_bytes(&signed_tx.signature) {
+            Ok(sig) => sig,
+            Err(_) => {
+                println!("Invalid signature format");
+                return Json(serde_json::json!({ "error": "Invalid signature format" }));
+            }
+        };
+        
+        // Verify signature
+        if public_key.verify(message.as_bytes(), &signature).is_err() {
+            println!("Signature verification failed");
+            return Json(serde_json::json!({ "error": "Signature verification failed" }));
         }
         
-        println!("Processed tx: {:?} (shard_id={})", tx, shard_id);
-        Json(serde_json::json!({ "status": "ok", "shard_id": shard_id, "message": "Transaction added to pool" }))
+        // Create core Transaction
+        let core_tx = Transaction {
+            from: Address(signed_tx.from.clone()),
+            to: Address(signed_tx.to.clone()),
+            amount: signed_tx.amount,
+            payload: signed_tx.payload,
+            findag_time: signed_tx.findag_time,
+            hashtimer: {
+                let mut ht = [0u8; 32];
+                if signed_tx.hashtimer.len() >= 32 {
+                    ht.copy_from_slice(&signed_tx.hashtimer[..32]);
+                } else {
+                    ht[..signed_tx.hashtimer.len()].copy_from_slice(&signed_tx.hashtimer);
+                }
+                ht
+            },
+            signature,
+            public_key,
+            shard_id: ShardId(signed_tx.shard_id),
+            source_shard: None,
+            dest_shard: None,
+            target_chain: None,
+            bridge_protocol: None,
+        };
+        
+        // Add to transaction pool
+        let tx_pool = unsafe { TX_POOL.as_ref().unwrap() };
+        let added = tx_pool.add_transaction(core_tx.clone());
+        
+        if added {
+            // Broadcast to network
+            if let Some(propagator) = unsafe { NETWORK_PROPAGATOR.as_ref() } {
+                let stx: SerializableTransaction = core_tx.into();
+                let msg = crate::network::propagation::GossipMsg::NewTransaction(stx);
+                propagator.broadcast(&msg).await;
+            }
+            
+            println!("Processed signed tx: from={}, to={}, amount={} (shard_id={})", 
+                    signed_tx.from, signed_tx.to, signed_tx.amount, signed_tx.shard_id);
+            Json(serde_json::json!({ "status": "ok", "shard_id": signed_tx.shard_id, "message": "Signed transaction added to pool" }))
+        } else {
+            metrics::ERROR_COUNT.with_label_values(&["tx_rejected"]).inc();
+            println!("Transaction rejected by pool");
+            Json(serde_json::json!({ "error": "Transaction rejected by pool", "shard_id": signed_tx.shard_id }))
+        }
     } else {
-        metrics::ERROR_COUNT.with_label_values(&["tx_rejected"]).inc();
-        Json(serde_json::json!({ "error": "Transaction rejected by pool", "shard_id": shard_id }))
+        // Try to parse as simple ApiTransaction
+        if let Ok(tx) = serde_json::from_value::<ApiTransaction>(tx_data) {
+            let storage = unsafe { STORAGE.as_ref().unwrap() };
+            let whitelist = storage.load_asset_whitelist().unwrap_or_default();
+            if !whitelist.contains(&tx.currency) {
+                metrics::ERROR_COUNT.with_label_values(&["unsupported_asset"]).inc();
+                return Json(serde_json::json!({ "error": format!("'{}' is not a supported asset", tx.currency) }));
+            }
+            let shard_id = tx.shard_id.unwrap_or(0);
+            
+            // Create a dummy keypair for signing (in production, this should be the node's keypair)
+            let mut rng = rand::rngs::OsRng;
+            let keypair = ed25519_dalek::Keypair::generate(&mut rng);
+            
+            // Create a message to sign (transaction data)
+            let message = format!("{}:{}:{}:{}", tx.from, tx.to, tx.amount, tx.currency);
+            let signature = keypair.sign(message.as_bytes());
+            
+            // Convert ApiTransaction to core Transaction
+            let core_tx = Transaction {
+                from: Address(tx.from.clone()),
+                to: Address(tx.to.clone()),
+                amount: tx.amount,
+                payload: vec![], // Empty payload for simple transfers
+                findag_time: 0, // Will be set by the system
+                hashtimer: [0u8; 32], // Will be computed by the system
+                signature,
+                public_key: keypair.public,
+                shard_id: ShardId(shard_id),
+                source_shard: None,
+                dest_shard: None,
+                target_chain: None,
+                bridge_protocol: None,
+            };
+            
+            // Add to transaction pool
+            let tx_pool = unsafe { TX_POOL.as_ref().unwrap() };
+            let added = tx_pool.add_transaction(core_tx.clone());
+            
+            if added {
+                // Broadcast to network
+                if let Some(propagator) = unsafe { NETWORK_PROPAGATOR.as_ref() } {
+                    let stx: SerializableTransaction = core_tx.into();
+                    let msg = crate::network::propagation::GossipMsg::NewTransaction(stx);
+                    propagator.broadcast(&msg).await;
+                }
+                
+                println!("Processed simple tx: {:?} (shard_id={})", tx, shard_id);
+                Json(serde_json::json!({ "status": "ok", "shard_id": shard_id, "message": "Transaction added to pool" }))
+            } else {
+                metrics::ERROR_COUNT.with_label_values(&["tx_rejected"]).inc();
+                Json(serde_json::json!({ "error": "Transaction rejected by pool", "shard_id": shard_id }))
+            }
+        } else {
+            println!("Invalid transaction format received");
+            Json(serde_json::json!({ "error": "Invalid transaction format" }))
+        }
     }
 }
 

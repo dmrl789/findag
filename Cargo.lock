@@ -950,6 +950,7 @@ name = "findag"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "anyhow",
  "argon2",
  "axum",
  "base64 0.21.7",
@@ -969,8 +970,8 @@ dependencies = [
  "libp2p-mdns",
  "libp2p-noise",
  "prometheus",
- "rand 0.8.5",
- "rand_core 0.6.4",
+ "rand 0.7.3",
+ "rand_core 0.5.1",
  "reqwest",
  "rpassword",
  "serde",
