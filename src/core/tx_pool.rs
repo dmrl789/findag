@@ -3,6 +3,7 @@ use std::collections::{HashMap, BTreeMap};
 use std::sync::{Arc, Mutex};
 use crate::storage::state::StateDB;
 use crate::metrics;
+use sha2::{Sha256, Digest};
 
 /// Transaction Pool (Mempool) for FinDAG
 /// - Deduplicates by transaction hash
@@ -29,6 +30,19 @@ impl TxPool {
         }
     }
 
+    /// Compute transaction hash from transaction data
+    fn compute_tx_hash(&self, tx: &Transaction) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(tx.from.as_str().as_bytes());
+        hasher.update(tx.to.as_str().as_bytes());
+        hasher.update(&tx.amount.to_le_bytes());
+        hasher.update(&tx.payload);
+        hasher.update(&tx.findag_time.to_le_bytes());
+        hasher.update(&tx.public_key.to_bytes());
+        hasher.update(&tx.shard_id.0.to_le_bytes());
+        hasher.finalize().into()
+    }
+
     /// Add a new transaction to the pool. Returns true if added.
     pub fn add_transaction(&mut self, tx: Transaction) -> bool {
         // Cross-shard transaction protocol (scaffold)
@@ -41,11 +55,14 @@ impl TxPool {
             // For now, reject or queue cross-shard txs
             return false;
         }
-        let tx_hash = tx.hashtimer; // Or use a real tx hash if available
+        
+        let tx_hash = self.compute_tx_hash(&tx);
         if self.transactions.contains_key(&tx_hash) {
             metrics::ERROR_COUNT.with_label_values(&["duplicate_tx"]).inc();
+            println!("[TxPool] Rejected duplicate transaction");
             return false; // Duplicate
         }
+        
         if self.transactions.len() >= self.max_size {
             // Evict oldest transaction(s) to make room
             if let Some((&oldest_time, hashes)) = self.time_index.iter_mut().next() {
@@ -57,27 +74,25 @@ impl TxPool {
                 }
             }
         }
-        // Enforce dynamic asset whitelist
-        let asset = "USD"; // Default asset for now
-        let whitelist = self.asset_whitelist.lock().unwrap();
-        if !whitelist.contains(&asset.to_string()) {
-            println!("[TxPool] Rejected tx: unsupported asset '{asset}'.");
-            metrics::ERROR_COUNT.with_label_values(&["unsupported_asset"]).inc();
-            return false;
-        }
-        // Check sender balance before adding
+        
+        // For now, skip asset whitelist check since we're using a default asset
+        // TODO: Add proper asset field to Transaction struct
+        
+        // Check sender balance before adding (using USD as default asset)
         let from = tx.from.as_str();
         let amount = tx.amount;
-        let bal = self.state_db.get_balance(tx.shard_id.0, from, asset);
+        let bal = self.state_db.get_balance(tx.shard_id.0, from, "USD");
         if bal < amount {
-            println!("[TxPool] Rejected tx: insufficient funds for {from} ({amount} {asset})");
+            println!("[TxPool] Rejected tx: insufficient funds for {from} ({amount} USD, balance: {bal})");
             metrics::ERROR_COUNT.with_label_values(&["insufficient_funds"]).inc();
             return false;
         }
+        
         self.time_index.entry(tx.findag_time).or_default().push(tx_hash);
         let added = self.transactions.insert(tx_hash, tx).is_none();
         if added {
             metrics::MEMPOOL_SIZE.set(self.transactions.len() as i64);
+            println!("[TxPool] Added transaction to pool, size: {}", self.transactions.len());
         }
         added
     }

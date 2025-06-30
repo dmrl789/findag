@@ -19,6 +19,8 @@ use rand::Rng;
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
 use crate::consensus::mempool::Mempool;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Configuration for block production loop
 #[derive(Debug, Clone)]
@@ -39,7 +41,7 @@ pub enum Instruction {
 
 fn generate_dummy_instruction() -> Instruction {
     let mut rng = StdRng::from_rng(OsRng).unwrap();
-    let random_id: u32 = rng.gen_range(1000..9999);
+    let random_id: u32 = rng.gen_range(1000, 9999);
     Instruction::LoadAsset {
         asset_id: format!("DUMMY-ASSET-{}", random_id),
         amount: 1,
@@ -65,7 +67,7 @@ fn compute_block_hash(payload: &[u8]) -> [u8; 32] {
 pub async fn run_block_production_loop(
     dag: &mut DagEngine,
     tx_pool: &ShardedTxPool,
-    mempool: &Mempool,
+    mempool: Arc<Mutex<Mempool>>,
     proposer: Address,
     keypair: &Keypair,
     config: BlockProductionConfig,
@@ -80,11 +82,11 @@ pub async fn run_block_production_loop(
         let parent_blocks: Vec<[u8; 32]> = dag.get_tips();
         let tips_time = block_start.elapsed();
         
-        // Create block producer after getting tips
+        // Create block producer without holding mempool lock
         let mut block_producer = BlockProducer::new(
             dag,
             tx_pool,
-            mempool,
+            mempool.clone(), // Pass the Arc<Mutex<Mempool>> directly
             proposer.clone(),
             keypair,
             BlockProducerConfig {

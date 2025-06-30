@@ -267,7 +267,9 @@ mod tests {
             validator_set.add_validator_with_metadata(
                 address,
                 keypair.public,
-                &format!("validator_{}", i)
+                1000, // stake
+                format!("validator_{}", i), // institution_name
+                "test_region".to_string(), // region
             );
         }
 
@@ -290,7 +292,9 @@ mod tests {
             validator_set.add_validator_with_metadata(
                 address,
                 keypair.public,
-                &format!("validator_{}", i)
+                1000, // stake
+                format!("validator_{}", i), // institution_name
+                "test_region".to_string(), // region
             );
         }
 

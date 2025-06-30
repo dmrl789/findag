@@ -13,6 +13,8 @@ use chrono;
 use serde_json;
 use bincode;
 use crate::dagtimer::hashtimer::compute_hashtimer;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Asset instruction for block payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,7 +58,7 @@ pub struct BlockProducerConfig {
 pub struct BlockProducer<'a> {
     pub dag: &'a mut crate::core::dag_engine::DagEngine,
     pub tx_pool: &'a crate::core::tx_pool::ShardedTxPool,
-    pub mempool: &'a Mempool,
+    pub mempool: Arc<Mutex<Mempool>>,
     pub proposer: Address,
     pub keypair: &'a Keypair,
     pub config: BlockProducerConfig,
@@ -68,7 +70,7 @@ impl<'a> BlockProducer<'a> {
     pub fn new(
         dag: &'a mut crate::core::dag_engine::DagEngine,
         tx_pool: &'a crate::core::tx_pool::ShardedTxPool,
-        mempool: &'a Mempool,
+        mempool: Arc<Mutex<Mempool>>,
         proposer: Address,
         keypair: &'a Keypair,
         config: BlockProducerConfig,
@@ -89,24 +91,24 @@ impl<'a> BlockProducer<'a> {
     /// Generate a dummy instruction for testing
     fn generate_dummy_instruction(&self) -> Instruction {
         let mut rng = StdRng::from_rng(OsRng).unwrap();
-        let random_id: u32 = rng.gen_range(1000..9999);
-        let instruction_type = rng.gen_range(0..3);
+        let random_id: u32 = rng.gen_range(1000, 9999);
+        let instruction_type = rng.gen_range(0, 3);
         
         match instruction_type {
             0 => Instruction::LoadAsset {
                 asset_id: format!("DUMMY-ASSET-{}", random_id),
-                amount: rng.gen_range(1..1000),
+                amount: rng.gen_range(1, 1000),
                 issuer: "@test.fd".into(),
             },
             1 => Instruction::TransferAsset {
                 asset_id: "USD".to_string(),
-                amount: rng.gen_range(1..100),
+                amount: rng.gen_range(1, 100),
                 from: format!("fdg1qbot{}", random_id),
                 to: format!("fdg1qdest{}", random_id + 1000),
             },
             _ => Instruction::UnloadAsset {
                 asset_id: format!("DUMMY-ASSET-{}", random_id),
-                amount: rng.gen_range(1..500),
+                amount: rng.gen_range(1, 500),
                 owner: format!("fdg1qowner{}", random_id),
             },
         }
@@ -158,12 +160,10 @@ impl<'a> BlockProducer<'a> {
         let mut rng = StdRng::from_rng(OsRng).unwrap();
         
         // Get transactions from mempool
-        let mut transactions = Vec::new();
-        for _ in 0..rng.gen_range(1..5) { // 1-4 transactions per block
-            if let Some(tx) = self.mempool.next().await {
-                transactions.push(tx);
-            }
-        }
+        let transactions = {
+            let mempool_guard = self.mempool.lock().await;
+            mempool_guard.get_batch(rng.gen_range(1, 5)).await // 1-4 transactions per block
+        };
         
         // Generate unique nonce for this block
         let nonce = rng.gen::<u32>();
