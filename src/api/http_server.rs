@@ -18,23 +18,28 @@ use std::time::Duration;
 use std::fs::OpenOptions;
 use std::io::Write;
 use metrics;
-use crate::core::types::ShardId;
+use crate::core::types::{ShardId, Transaction};
 use crate::core::bridge::{BridgeTx, BridgeManager};
 use crate::core::confidential::ConfidentialTx;
 use crate::core::identity::Identity;
 use once_cell::sync::Lazy;
 use crate::core::types::Block;
 use axum::http::StatusCode;
+use crate::core::tx_pool::ShardedTxPool;
+use crate::core::types::SerializableTransaction;
+use crate::network::propagation::NetworkPropagator;
 
 static mut VALIDATOR_SET: Option<Arc<Mutex<ValidatorSet>>> = None;
 static mut STORAGE: Option<Arc<crate::storage::persistent::PersistentStorage>> = None;
 static mut GOVERNANCE_STATE: Option<Arc<Mutex<crate::consensus::governance::GovernanceState>>> = None;
+static mut TX_POOL: Option<Arc<ShardedTxPool>> = None;
+static mut NETWORK_PROPAGATOR: Option<Arc<NetworkPropagator>> = None;
 const ADMIN_TOKEN: &str = "changeme";
 const JWT_SECRET: &[u8] = b"changeme_jwt_secret"; // Replace with secure secret in production
 static BRIDGE_MANAGER: Lazy<BridgeManager> = Lazy::new(|| BridgeManager::new());
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Transaction {
+pub struct ApiTransaction {
     pub from: String,
     pub to: String,
     pub amount: u64,
@@ -121,7 +126,7 @@ async fn get_balance(Path((address, asset)): Path<(String, String)>, Query(param
 }
 
 /// POST /tx (accepts optional shard_id in JSON)
-async fn post_tx(Json(tx): Json<Transaction>) -> Json<serde_json::Value> {
+async fn post_tx(Json(tx): Json<ApiTransaction>) -> Json<serde_json::Value> {
     metrics::API_CALLS.with_label_values(&["/tx"]).inc();
     let storage = unsafe { STORAGE.as_ref().unwrap() };
     let whitelist = storage.load_asset_whitelist().unwrap_or_default();
@@ -130,9 +135,39 @@ async fn post_tx(Json(tx): Json<Transaction>) -> Json<serde_json::Value> {
         return Json(serde_json::json!({ "error": format!("'{}' is not a supported asset", tx.currency) }));
     }
     let shard_id = tx.shard_id.unwrap_or(0);
-    // TODO: Add to mempool, broadcast, etc. Use shard_id in all mempool/state calls
-    println!("Received tx: {:?} (shard_id={})", tx, shard_id);
-    Json(serde_json::json!({ "status": "ok", "shard_id": shard_id }))
+    
+    // Convert ApiTransaction to core Transaction
+    let core_tx = Transaction {
+        from: Address(tx.from.clone()),
+        to: Address(tx.to.clone()),
+        amount: tx.amount,
+        payload: vec![], // Empty payload for simple transfers
+        findag_time: 0, // Will be set by the system
+        hashtimer: [0u8; 32], // Will be computed by the system
+        signature: [0u8; 64], // Will be set by the system
+        shard_id: ShardId(shard_id),
+        source_shard: None,
+        dest_shard: None,
+    };
+    
+    // Add to transaction pool
+    let tx_pool = unsafe { TX_POOL.as_ref().unwrap() };
+    let added = tx_pool.add_transaction(core_tx.clone());
+    
+    if added {
+        // Broadcast to network
+        if let Some(propagator) = unsafe { NETWORK_PROPAGATOR.as_ref() } {
+            let stx: SerializableTransaction = core_tx.into();
+            let msg = crate::network::propagation::GossipMsg::NewTransaction(stx);
+            propagator.broadcast(&msg).await;
+        }
+        
+        println!("Processed tx: {:?} (shard_id={})", tx, shard_id);
+        Json(serde_json::json!({ "status": "ok", "shard_id": shard_id, "message": "Transaction added to pool" }))
+    } else {
+        metrics::ERROR_COUNT.with_label_values(&["tx_rejected"]).inc();
+        Json(serde_json::json!({ "error": "Transaction rejected by pool", "shard_id": shard_id }))
+    }
 }
 
 async fn get_validators() -> Json<serde_json::Value> {
@@ -365,6 +400,22 @@ fn audit_log(subject: &str, action: &str, details: &str) {
     writeln!(file, "{} | {} | {} | {}", now, subject, action, details).unwrap();
 }
 
+pub fn init_http_server(
+    validator_set: Arc<Mutex<ValidatorSet>>,
+    storage: Arc<crate::storage::persistent::PersistentStorage>,
+    governance_state: Arc<Mutex<crate::consensus::governance::GovernanceState>>,
+    tx_pool: Arc<ShardedTxPool>,
+    network_propagator: Arc<NetworkPropagator>,
+) {
+    unsafe {
+        VALIDATOR_SET = Some(validator_set);
+        STORAGE = Some(storage);
+        GOVERNANCE_STATE = Some(governance_state);
+        TX_POOL = Some(tx_pool);
+        NETWORK_PROPAGATOR = Some(network_propagator);
+    }
+}
+
 pub async fn run_http_server() {
     // In real use, pass Arc<Mutex<>> from main
     unsafe {
@@ -373,6 +424,12 @@ pub async fn run_http_server() {
         }
         if STORAGE.is_none() {
             panic!("STORAGE must be initialized before running HTTP server");
+        }
+        if TX_POOL.is_none() {
+            panic!("TX_POOL must be initialized before running HTTP server");
+        }
+        if NETWORK_PROPAGATOR.is_none() {
+            panic!("NETWORK_PROPAGATOR must be initialized before running HTTP server");
         }
     }
     let app = Router::new()

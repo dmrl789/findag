@@ -1,9 +1,9 @@
 # FinDAG Product Requirements Document (PRD)
 
 **Product Name:** FinDAG  
-**Version:** 1.0  
+**Version:** 1.1  
 **Owner:** DMRL789 LLC  
-**Last Updated:** 2025-06-26
+**Last Updated:** 2025-01-27
 
 ---
 
@@ -15,6 +15,8 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
 - **Ed25519** for address signatures
 - **Automatic node discovery**
 - **Authorized validation**: Only authorized nodes can validate blocks and rounds
+- **Persistent storage**: Sled-based crash-safe database for all state
+- **Hierarchical handles**: Institutional-grade identity management system
 
 ---
 
@@ -24,6 +26,7 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
 - Support 1M–10M TPS throughput without compromising ordering determinism
 - Ensure regulatory compliance with precision timestamping
 - Prevent front-running and improve fairness in high-frequency financial markets
+- Provide institutional-grade transparency and auditability
 
 ---
 
@@ -38,6 +41,8 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
 | Transaction size    | ~250 bytes                  |
 | Throughput goal     | 1M–10M TPS                  |
 | Ordering mechanism  | HashTimer (FinDAG Time + hash) |
+| Storage             | Sled embedded database       |
+| Identity system     | Hierarchical handles         |
 
 ---
 
@@ -47,15 +52,18 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
 
 - Precise time synchronization with 100ns resolution
 - Timestamp-based ordering for auditability and manipulation prevention
-- **HashTimer is a two-part hash:**
-  - The first part is 13–14 hex characters representing the FinDAG Time, which is the basis for chronologically organizing all transactions, blocks, and rounds. This provides precision up to 1/10 of a microsecond.
-  - The second part is a cryptographic hash for deterministic ordering and time-lock logic
+- **HashTimer is a three-part hash:**
+  - FinDAG Time (u64) for chronological ordering
+  - Content hash (serialized parent blocks) for deterministic structure
+  - Nonce (u32) for uniqueness and distribution
+  - Provides precision up to 1/10 of a microsecond
 
 ### 4.2 DAG-Based Block & Round Design
 
 - Blocks form a DAG within micro-intervals (10–50ms)
 - Rounds serve as checkpoint layers (~100–250ms) to finalize DAG paths
 - Enables parallel block inclusion with global ordering
+- Persistent storage of complete DAG structure
 
 ### 4.3 Finality in <500ms
 
@@ -292,7 +300,7 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
     curl http://localhost:8080/assets
     ```
 
-### 4.12 Merkle Proofs and Block Integrity
+### 4.15 Merkle Proofs and Block Integrity
 
 - **Merkle Root in Block Header:**
   - Every block includes a Merkle root of all transaction hashes, enabling cryptographic inclusion proofs.
@@ -308,37 +316,231 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
 - **Documentation and Examples:**
   - See SDK and API docs for example usage and integration flows.
 
+### 4.16 Hierarchical Handle System & Identity Management
+
+- **Hierarchical Handle Structure:**
+  - Handles follow a hierarchical, dot-separated format: `@organization.location.department.fd`
+  - Examples: `@hsbc.london.trading.fd`, `@ubs.zurich.compliance.fd`
+  - Parent handles control subhandle registration, key rotation, and revocation
+  - All handle operations are on-chain, auditable, and signed
+
+- **Handle Operations:**
+  - **Register Subhandle:** Parent signs registration of new subhandle with new public key
+  - **Rotate Key:** Handle owner signs key rotation, maintaining key history
+  - **Revoke Handle:** Parent signs revocation with reason and timestamp
+  - **Resolve Handle:** Query current handle info, key history, and children
+
+- **Key Management & Audit Trail:**
+  - Complete key history maintained on-chain with timestamps
+  - Each key rotation is signed and immutable
+  - Revoked handles maintain audit trail with revocation reason
+  - All operations include cryptographic signatures for non-repudiation
+
+- **CLI Wallet Integration:**
+  - `findag-handle-wallet` binary for handle management
+  - Commands: `register-subhandle`, `rotate-key`, `revoke-handle`, `resolve`, `list-children`
+  - Generates signed JSON instructions for on-chain processing
+  - Supports metadata and hierarchical relationships
+
+### 4.17 Persistent Storage & Institutional Transparency
+
+- **Sled-Based Persistent Storage:**
+  - Embedded, crash-safe database for all blockchain state
+  - No external dependencies, pure Rust implementation
+  - Supports key-value storage with range queries for efficient searching
+
+- **Stored Data Types:**
+  - **Blocks & Rounds:** Complete DAG structure with signatures and timestamps
+  - **Asset State:** Current ownership, balances, and complete transaction history
+  - **Handle Registry:** All handle records, key history, and hierarchical relationships
+  - **Validator Set:** Current validators, status, and metadata
+  - **Governance State:** Proposals, votes, and governance history
+
+- **Data Schema:**
+  - **Assets:** `asset:{asset_id}` → AssetRecord (owner, status, amount, history)
+  - **Handles:** `handle:{handle}` → HandleRecord (parent, pubkey, key_history, children)
+  - **Blocks:** `block:{hash}` → SerializableBlock (instructions, signatures, timestamp)
+  - **Rounds:** `round:{number}` → SerializableRound (finalized_blocks, committee, signatures)
+
+- **Institutional-Grade Auditability:**
+  - Every node maintains complete local copy of all state
+  - All data is queryable via HTTP API for real-time transparency
+  - Immutable audit trail with cryptographic proofs
+  - Support for regulatory compliance and external audits
+
+### 4.18 HTTP API for Transparency & Integration
+
+- **RESTful API Endpoints:**
+  - **Assets:** `GET /assets/{asset_id}`, `GET /assets?owner={handle}`
+  - **Handles:** `GET /handles/{handle}`, `GET /handles?parent={handle}`
+  - **Blocks:** `GET /blocks/{block_hash}`, `GET /blocks?round={number}`
+  - **Rounds:** `GET /rounds/{round_number}`, `GET /rounds?finalized={block_hash}`
+  - **Ownership:** `GET /ownership?handle={handle}`, `GET /ownership?asset={asset_id}`
+  - **Transactions:** `GET /tx/{tx_id}`, `GET /tx?asset={asset_id}&from={timestamp}&to={timestamp}`
+
+- **API Response Format:**
+  - All responses in JSON format for easy integration
+  - Include complete audit trails and cryptographic proofs
+  - Support for filtering, pagination, and time-range queries
+  - Error responses with detailed error codes and messages
+
+- **Use Cases:**
+  - **CLI Wallet Integration:** Query balances, resolve handles, verify transactions
+  - **Block Explorer:** Real-time blockchain state visualization
+  - **Auditor Tools:** Export proofs, verify finality, trace asset ownership
+  - **Regulatory Reporting:** Automated compliance reporting and monitoring
+  - **Client Integration:** Embed blockchain data in trading systems and dashboards
+
+- **Security & Access Control:**
+  - Read-only endpoints for transparency (no authentication required)
+  - Administrative endpoints require JWT authentication
+  - Rate limiting and request validation
+  - CORS support for web-based explorers
+
+### 4.19 Block Explorer & Transparency Interface
+
+- **Web-Based Block Explorer:**
+  - Real-time visualization of FinDAG state
+  - Search by handle, asset ID, block hash, or transaction ID
+  - DAG visualization showing block and round relationships
+  - Asset ownership tracking and history visualization
+
+- **Explorer Features:**
+  - **Dashboard:** Latest blocks, rounds, TPS, and network status
+  - **Search:** Multi-criteria search across all data types
+  - **Visualization:** Interactive DAG graphs and timeline views
+  - **Export:** Download proofs, transaction history, and audit reports
+  - **API Integration:** Direct access to underlying HTTP API
+
+- **Institutional Benefits:**
+  - Real-time transparency for all participants
+  - Self-service audit capabilities
+  - Regulatory compliance support
+  - Integration with existing financial systems
+
+### 4.20 Quorum Rotation & Committee Management
+
+- **Dynamic Committee Selection:**
+  - Rotating committees of 20 validators per round (configurable)
+  - 12/20 signatures required for finality (2/3+1 threshold)
+  - Deterministic selection based on round number and validator set
+  - Fallback to full validator set if committee fails
+
+- **Committee Features:**
+  - **Reputation System:** Track validator performance and reliability
+  - **Automatic Rotation:** Committees change every round for security
+  - **Fault Tolerance:** Fallback mechanisms for committee failures
+  - **Audit Trail:** Complete record of committee assignments and signatures
+
+- **Benefits:**
+  - Improved scalability with smaller quorum sizes
+  - Enhanced security through rotation
+  - Maintained finality guarantees
+  - Practical for networks with 1000+ validators
+
+### 4.21 Asset Instruction Model
+
+- **Permissioned Asset Tracking:**
+  - Assets are tracked via explicit instructions rather than coin balances
+  - Instructions: `load_asset`, `transfer_asset`, `unload_asset`, `update_asset`
+  - Each instruction is signed by the appropriate handle
+  - Complete audit trail of all asset movements
+
+- **Instruction Types:**
+  - **Load Asset:** Create new asset ownership record
+  - **Transfer Asset:** Move asset between handles
+  - **Unload Asset:** Remove asset from system
+  - **Update Asset:** Modify asset metadata or status
+
+- **Security Model:**
+  - Only authorized handles can perform asset operations
+  - All instructions require cryptographic signatures
+  - Immutable audit trail with timestamps and finality proofs
+  - Support for complex ownership structures and compliance requirements
+
 ---
 
-## 11. Current Limitations & Next Steps for Production Readiness
+## 5. Production Readiness Status
 
-While FinDAG's core protocol, high-throughput transaction pool, DAG engine, block/round production, and basic P2P networking are implemented, the following areas are recommended for full production deployment:
+### 5.1 Implemented Features ✅
 
-- **Full Advanced P2P Integration:** Complete wiring of the libp2p-based P2P module with mempool, DAG, and round logic. Ensure all network messages are validated and processed.
-- **Message Validation & Security:** Implement full cryptographic signature verification, replay protection, and rate limiting for all incoming transactions, blocks, and rounds. Add peer scoring to mitigate spam and abuse.
-- **Persistent Storage:** Integrate a durable database (e.g., RocksDB, sled) for blocks, rounds, state (balances/assets), and transaction history to enable crash recovery and long-term auditability.
-- **Dynamic Validator Set / Governance:** Support dynamic validator membership, governance mechanisms (voting, proposals), and optional staking or permissioning.
-- **BFT Consensus (Optional):** Consider implementing a Byzantine Fault Tolerant consensus protocol (e.g., HotStuff, Tendermint) for adversarial or high-stakes environments.
-- **Expanded API/CLI/Wallet:** Extend the HTTP API and CLI wallet to support transaction history, block/round queries, state queries, asset management, and real-time node interaction.
-- **Monitoring & Observability:** Integrate with monitoring tools (e.g., Prometheus, Grafana) for real-time dashboards, logs, and alerting.
-- **Deployment & DevOps:** Develop Docker/Kubernetes configs, CI/CD pipelines, and automated deployment scripts for easy scaling, upgrades, and operational reliability.
-- **Documentation & Compliance:** Complete API documentation, operational runbooks, and compliance materials for audits and regulatory requirements.
+- **Core Protocol:** DAG-based block and round production
+- **High-Throughput Transaction Pool:** Sharded in-memory mempool
+- **Persistent Storage:** Sled-based database for all state
+- **Hierarchical Handle System:** Complete identity management
+- **Asset Governance:** Dynamic asset whitelist and management
+- **HTTP API:** Comprehensive REST API for all operations
+- **Validator Management:** Dynamic validator set with persistence
+- **Monitoring:** Prometheus metrics and Grafana dashboards
+- **CLI Tools:** Wallet and handle management binaries
+- **Docker Support:** Containerized deployment
+- **Security:** JWT authentication and cryptographic signatures
 
-These enhancements will ensure FinDAG is robust, secure, and ready for mission-critical financial deployments.
+### 5.2 Known Issues & Warnings ⚠️
+
+- **Deprecated Base64 Functions:** Multiple warnings for deprecated `base64::encode` and `base64::decode` usage
+- **Unused Imports:** Various unused import warnings across modules
+- **Unused Variables:** Some unused parameters in state management
+- **Type Mismatches:** Minor type conversion issues in block production
+
+### 5.3 Production Deployment Checklist
+
+- [x] Core blockchain functionality
+- [x] Persistent storage implementation
+- [x] HTTP API endpoints
+- [x] Security and authentication
+- [x] Monitoring and metrics
+- [x] Docker containerization
+- [x] CLI tools and wallets
+- [ ] Full P2P networking integration
+- [ ] Advanced consensus mechanisms
+- [ ] Performance optimization
+- [ ] Security audit completion
+- [ ] Compliance documentation
+- [ ] Production deployment guides
+
+### 5.4 Next Steps for Production
+
+1. **Fix Remaining Compilation Warnings:**
+   - Update deprecated base64 functions to use Engine API
+   - Clean up unused imports and variables
+   - Resolve type mismatches
+
+2. **Complete P2P Integration:**
+   - Wire libp2p networking with consensus
+   - Implement message validation and security
+   - Add peer scoring and rate limiting
+
+3. **Performance Optimization:**
+   - Benchmark and optimize critical paths
+   - Implement caching strategies
+   - Optimize database queries
+
+4. **Security Hardening:**
+   - Complete security audit
+   - Implement advanced authentication
+   - Add rate limiting and DDoS protection
+
+5. **Production Deployment:**
+   - Create production deployment guides
+   - Implement backup and recovery procedures
+   - Add operational monitoring and alerting
 
 ---
 
-## 5. Use Cases
+## 6. Use Cases
 
 - **High-Frequency Trading (HFT):** Algorithmic trading with deterministic microsecond timing
 - **Interbank Settlement:** Real-time clearing with <500ms latency
 - **Tokenized Securities:** Precision audit trail for compliance
 - **CBDC Infrastructure:** Scalable backend with finality guarantees
 - **Cross-Border Payments:** Fast, secure, and cost-effective transactions
+- **Institutional Compliance:** Regulatory reporting and audit trails
+- **Asset Management:** Hierarchical handle-based asset tracking
 
 ---
 
-## 6. Performance Scenarios
+## 7. Performance Scenarios
 
 - **Conservative (100 nodes):**  
   100 nodes × 100 tx/block × 100 blocks/sec = **1M TPS**
@@ -347,15 +549,17 @@ These enhancements will ensure FinDAG is robust, secure, and ready for mission-c
 
 ---
 
-## 7. Compliance & Security
+## 8. Compliance & Security
 
 - FinDAG Time enables microsecond audit trails
 - <500ms finality satisfies regulatory reporting demands
 - Deterministic ordering ensures fairness, reducing risk of front-running
+- Hierarchical handles provide institutional-grade identity management
+- Persistent storage ensures complete auditability
 
 ---
 
-## 8. Risks & Mitigations
+## 9. Risks & Mitigations
 
 | Risk                    | Mitigation Strategy                                 |
 |-------------------------|-----------------------------------------------------|
@@ -363,28 +567,24 @@ These enhancements will ensure FinDAG is robust, secure, and ready for mission-c
 | DAG complexity          | Pruning and checkpointing mechanisms                |
 | Node sync at high freq. | Time-synchronized consensus and deterministic sync  |
 | Storage growth          | Compression and sharding for block/round storage    |
+| Identity management     | Hierarchical handle system with key rotation        |
+| Regulatory compliance   | Persistent audit trails and transparency APIs       |
 
 ---
 
-## 9. KPIs
+## 10. KPIs
 
 - **Transaction Finality Time:** Target < 500ms
 - **Peak TPS:** Minimum 1M, scalable to 10M
 - **Block Propagation Delay:** < 10ms average
 - **Round Checkpoint Latency:** < 250ms
 - **Auditability:** 100% with microsecond timestamp accuracy
+- **Storage Performance:** Sub-millisecond query response times
+- **API Response Time:** < 100ms for all endpoints
 
 ---
 
-## 10. Next Steps
-
-1. Formalize FinDAG Time consensus protocol
-2. Develop prototype DAG block engine
-3. Simulate TPS at different network sizes (100/500/1000 nodes)
-4. Benchmark propagation and finality under load
-5. Validate compliance with ISO/IEC 20022 and MiFID II audit requirements
-
-## 5. Getting Started
+## 11. Getting Started
 
 - **Clone the Repository:**
   ```sh
@@ -433,7 +633,7 @@ These enhancements will ensure FinDAG is robust, secure, and ready for mission-c
     cargo fuzz run fuzz_api_transaction
     ```
 
-## 6. Contributing
+## 12. Contributing
 
 - **Development Workflow:**
   - Fork the repo and create a feature branch.

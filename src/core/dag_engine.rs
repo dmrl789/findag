@@ -193,6 +193,10 @@ impl DagEngine {
         vec![]
     }
 
+    pub fn get_parent_blocks(&self) -> Vec<[u8; 32]> {
+        self.get_tips()
+    }
+
     fn compute_block_id(&self, block: &Block) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(&block.shard_id.0.to_be_bytes());

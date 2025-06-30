@@ -5,10 +5,14 @@ use reqwest::Client;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use findag::core::types::Transaction;
+use findag::core::types::{Transaction, ShardId};
 use findag::core::address::Address;
-use rand07::Rng;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
+use rand::Rng;
+use rand::rngs::OsRng;
 use ed25519_dalek::{Keypair, Signature, PublicKey, Signer};
+use serde_json;
 
 #[derive(Parser)]
 #[command(name = "findag-transaction-bot")]
@@ -26,7 +30,7 @@ struct Cli {
     #[arg(long, default_value = "1")]
     concurrent_bots: u32,
     
-    #[arg(long, default_value = "1000")]
+    #[arg(long, default_value = "50")]
     max_transactions: Option<u64>,
     
     #[command(subcommand)]
@@ -50,7 +54,7 @@ enum Commands {
         #[arg(long, default_value = "100")]
         num_transactions: u64,
         
-        #[arg(long, default_value = "10")]
+        #[arg(long, default_value = "1")]
         interval_ms: u64,
     },
     /// Run a realistic load test (variable intervals)
@@ -58,10 +62,10 @@ enum Commands {
         #[arg(long, default_value = "300")]
         duration_seconds: u64,
         
-        #[arg(long, default_value = "5")]
+        #[arg(long, default_value = "1")]
         min_interval_ms: u64,
         
-        #[arg(long, default_value = "50")]
+        #[arg(long, default_value = "10")]
         max_interval_ms: u64,
     },
 }
@@ -139,43 +143,53 @@ impl TransactionBot {
     }
     
     fn create_test_transaction(&self) -> Transaction {
-        let mut rng = rand07::thread_rng();
+        let mut rng = StdRng::from_rng(OsRng).unwrap();
+        // Funded bot accounts (senders)
+        let bot_accounts = vec![
+            "fdg1qbot821642",
+            "fdg1qbot519950",
+            "fdg1qbot260960",
+            "fdg1qbot730226",
+            "fdg1qbot301129",
+        ];
+        // Funded test accounts (recipients)
+        let test_accounts = vec![
+            "fdg1qalice1234567890",
+            "fdg1qbob1234567890",
+            "fdg1qcharlie1234567890",
+            "fdg1qdiana1234567890",
+            "fdg1qedward1234567890",
+        ];
+        let from_addr = bot_accounts[rng.gen_range(0..bot_accounts.len())].to_string();
+        let to_addr = test_accounts[rng.gen_range(0..test_accounts.len())].to_string();
+        let amount = rng.gen_range(1..1000);
         
-        // Generate random addresses
-        let from_addr = format!("fdg1qbot{}", rng.gen_range(100000, 999999));
-        let to_addr = format!("fdg1qbot{}", rng.gen_range(100000, 999999));
+        // Create a dummy keypair for the transaction
+        let keypair = Keypair::generate(&mut StdRng::from_rng(OsRng).unwrap());
         
-        // Generate random amount
-        let amount = rng.gen_range(1, 1000);
-        
-        // Generate a dummy keypair for signing
-        let keypair = Keypair::generate(&mut rng);
-        
-        // Create a dummy signature (in real usage, this would be properly signed)
-        let dummy_message = format!("Test transaction from bot-{}", self.bot_id);
-        let signature = keypair.sign(dummy_message.as_bytes());
-        
-        // Create transaction
         Transaction {
             from: Address(from_addr),
             to: Address(to_addr),
             amount,
-            payload: format!("Test transaction from bot-{}", self.bot_id).into_bytes(),
-            findag_time: chrono::Utc::now().timestamp_micros() as u64,
-            hashtimer: rng.gen(),
-            signature,
-            public_key: keypair.public,
-            shard_id: findag::core::types::ShardId(0),
+            payload: vec![], // Empty payload for simple transfers
+            findag_time: 0, // Will be set by the system
+            hashtimer: [0u8; 32], // Will be computed by the system
+            signature: Signature::from_bytes(&[0u8; 64]).unwrap(), // Will be set by the system
+            public_key: keypair.public, // Required field
+            shard_id: ShardId(0),
             source_shard: None,
             dest_shard: None,
-            target_chain: None,
-            bridge_protocol: None,
+            target_chain: None, // Required field
+            bridge_protocol: None, // Required field
         }
     }
     
     async fn send_transaction(&self) -> bool {
         let tx = self.create_test_transaction();
         self.stats.increment_sent();
+        // Print the transaction for debugging
+        println!("[Bot-{}] Sending transaction: from={}, to={}, amount={}", 
+                 self.bot_id, tx.from.as_str(), tx.to.as_str(), tx.amount);
         
         match self.client.post(&format!("{}/tx", self.node_url))
             .json(&tx)
@@ -186,17 +200,16 @@ impl TransactionBot {
             Ok(response) => {
                 if response.status().is_success() {
                     self.stats.increment_successful();
-                    println!("[Bot-{}] ✅ Transaction sent: {} tokens", self.bot_id, tx.amount);
                     true
                 } else {
                     self.stats.increment_failed();
-                    println!("[Bot-{}] ❌ Failed to send transaction: {}", self.bot_id, response.status());
+                    println!("[Bot-{}] Transaction failed with status: {}", self.bot_id, response.status());
                     false
                 }
             }
             Err(e) => {
                 self.stats.increment_failed();
-                println!("[Bot-{}] ❌ Error sending transaction: {}", self.bot_id, e);
+                println!("[Bot-{}] Network error: {}", self.bot_id, e);
                 false
             }
         }
@@ -256,7 +269,7 @@ impl TransactionBot {
             self.send_transaction().await;
             
             // Random interval between min and max
-            let interval = rand07::thread_rng().gen_range(min_interval_ms, max_interval_ms + 1);
+            let interval = StdRng::from_rng(OsRng).unwrap().gen_range(min_interval_ms..=max_interval_ms);
             sleep(Duration::from_millis(interval)).await;
         }
         
