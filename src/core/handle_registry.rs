@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use ed25519_dalek::{PublicKey, Verifier, Signature};
 use serde::{Serialize, Deserialize};
 use ed25519_dalek::{Keypair, Signer};
-use rand07::rngs::OsRng;
+use rand::rngs::OsRng;
 use serde_json::json;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,7 +307,7 @@ impl HandleRegistry {
 mod tests {
     use super::*;
     use ed25519_dalek::{Keypair, Signer};
-    use rand07::rngs::OsRng;
+    use rand::rngs::OsRng;
     use serde_json::json;
 
     #[test]

@@ -3,9 +3,71 @@ name = "findag"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "findag"
+path = "src/lib.rs"
+
+[[bin]]
+name = "findag"
+path = "src/main.rs"
+
+[[bin]]
+name = "encrypted_wallet"
+path = "src/bin/encrypted_wallet.rs"
+
+[[bin]]
+name = "findag_wallet"
+path = "src/bin/findag_wallet.rs"
+
+[[bin]]
+name = "handle_wallet"
+path = "src/bin/handle_wallet.rs"
+
+[[bin]]
+name = "transaction_bot"
+path = "src/bin/transaction_bot.rs"
+
+[[bin]]
+name = "fund_accounts"
+path = "src/bin/fund_accounts.rs"
+
+[[bin]]
+name = "send_valid_txs"
+path = "src/bin/send_valid_txs.rs"
+
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
-axum = "0.7"
+axum = { version = "0.7", features = ["macros"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-fastrand = "1.9" 
+fastrand = "1.9"
+rand_core = "0.6.4"
+ed25519-dalek = { version = "1.0", features = ["serde"] }
+curve25519-dalek = "3.2"
+bincode = "1.3"
+sha2 = "0.10"
+bech32 = "0.9"
+sled = "0.34"
+hex = "0.4"
+libp2p = { version = "0.53.2", features = ["macros", "gossipsub", "mdns", "kad", "noise", "tcp", "yamux", "tokio"] }
+chrono = { version = "0.4", features = ["serde"] }
+libp2p-gossipsub = "0.46"
+libp2p-mdns = { version = "0.45.1", features = ["tokio"] }
+libp2p-kad = "0.45"
+libp2p-noise = "0.44"
+prometheus = "0.13"
+lazy_static = "1.4"
+rand = "0.8"
+libp2p-identity = "0.2.8"
+threadpool = "1.8"
+tower-http = { version = "0.5", features = ["cors"] }
+# Wallet encryption dependencies
+argon2 = "0.5"
+aes-gcm = "0.10"
+rpassword = "7.3"
+clap = { version = "4.4", features = ["derive"] }
+reqwest = { version = "0.11", features = ["json"] }
+base64 = "0.21"
+
+[dev-dependencies]
+tempfile = "3.8" 

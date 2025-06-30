@@ -274,7 +274,7 @@ fn list_children_cli(parent: &str) {
 
 // Utility function to generate a new keypair and save to file
 pub fn generate_keypair(output_path: &str) -> Result<(), String> {
-    let keypair = Keypair::generate(&mut rand07::rngs::OsRng);
+    let keypair = Keypair::generate(&mut rand::rngs::OsRng);
     let keypair_bytes = keypair.to_bytes();
     
     fs::write(output_path, keypair_bytes)

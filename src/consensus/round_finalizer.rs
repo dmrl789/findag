@@ -3,7 +3,7 @@
 
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use crate::consensus::validator_set::{ValidatorSet, ValidatorStatus, Committee, CommitteeConfig};
-use rand07;
+use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
 use crate::core::address::generate_address;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -237,7 +237,7 @@ impl<'a> RoundFinalizer<'a> {
 mod tests {
     use super::*;
     use ed25519_dalek::Signer;
-    use rand07::rngs::OsRng;
+    use rand::rngs::OsRng;
 
     fn create_validator(name: &str) -> (crate::core::address::Address, Keypair) {
         let (keypair, address) = generate_address();

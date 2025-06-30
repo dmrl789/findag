@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FinDAG Node Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        button { margin: 5px; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>FinDAG Node Connectivity Test</h1>
+    
+    <div>
+        <h3>Test Laptop 1 (192.168.1.44)</h3>
+        <button onclick="testNode('192.168.1.44', 'health')">Test Health</button>
+        <button onclick="testNode('192.168.1.44', 'node/info')">Test Node Info</button>
+        <button onclick="testNode('192.168.1.44', 'dag')">Test DAG</button>
+        <div id="laptop1-results"></div>
+    </div>
+    
+    <div>
+        <h3>Test Laptop 2 (192.168.1.20)</h3>
+        <button onclick="testNode('192.168.1.20', 'health')">Test Health</button>
+        <button onclick="testNode('192.168.1.20', 'node/info')">Test Node Info</button>
+        <button onclick="testNode('192.168.1.20', 'dag')">Test DAG</button>
+        <div id="laptop2-results"></div>
+    </div>
+
+    <script>
+        async function testNode(ip, endpoint) {
+            const url = `http://${ip}:8080/${endpoint}`;
+            const resultDiv = document.getElementById(`${ip === '192.168.1.44' ? 'laptop1' : 'laptop2'}-results`);
+            
+            try {
+                console.log(`Testing: ${url}`);
+                const response = await fetch(url, {
+                    method: 'GET',
+                    mode: 'cors',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.text();
+                    resultDiv.innerHTML = `
+                        <div class="test success">
+                            <strong>${endpoint}:</strong> ✅ Success (${response.status})
+                            <pre>${data || 'Empty response'}</pre>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="test error">
+                            <strong>${endpoint}:</strong> ❌ Error ${response.status}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                resultDiv.innerHTML = `
+                    <div class="test error">
+                        <strong>${endpoint}:</strong> ❌ Connection failed
+                        <br>Error: ${error.message}
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html> 
