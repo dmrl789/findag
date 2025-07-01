@@ -43,6 +43,18 @@ path = "check_balances.rs"
 name = "test_bot"
 path = "src/bin/test_bot.rs"
 
+[[bin]]
+name = "test_bot_address"
+path = "test_bot_address.rs"
+
+[[bin]]
+name = "tx_analyzer"
+path = "src/bin/tx_analyzer.rs"
+
+[[bin]]
+name = "network_tap"
+path = "src/bin/network_tap.rs"
+
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 axum = { version = "0.7", features = ["macros"] }

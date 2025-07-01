@@ -35,15 +35,15 @@ async fn main() {
     
     while start_time.elapsed() < duration {
         // Pick random sender and receiver
-        let from_idx = rng.gen_range(0..funded_accounts.len());
-        let mut to_idx = rng.gen_range(0..funded_accounts.len());
+        let from_idx = rng.gen_range(0, funded_accounts.len());
+        let mut to_idx = rng.gen_range(0, funded_accounts.len());
         while to_idx == from_idx {
-            to_idx = rng.gen_range(0..funded_accounts.len());
+            to_idx = rng.gen_range(0, funded_accounts.len());
         }
         
         let from = funded_accounts[from_idx];
         let to = funded_accounts[to_idx];
-        let amount = rng.gen_range(1..100); // Small amounts to avoid draining accounts
+        let amount = rng.gen_range(1, 100); // Small amounts to avoid draining accounts
         
         // Create a dummy keypair for signing (in real usage, you'd use the actual private key)
         let keypair = Keypair::generate(&mut rng);

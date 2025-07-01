@@ -22,7 +22,7 @@ pub async fn run_round_checkpoint_loop(
     let mut last_block_set: HashSet<[u8; 32]> = HashSet::new();
     loop {
         // Collect all new blocks since last round
-        let all_blocks: Vec<_> = dag.get_all_blocks();
+        let all_blocks: Vec<_> = dag.get_all_blocks().await;
         let mut new_block_ids = Vec::new();
         for block in &all_blocks {
             if !last_block_set.contains(&block.block_id) {

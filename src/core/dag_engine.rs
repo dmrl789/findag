@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
+use tokio::sync::Mutex as TokioMutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DAGVertex {
@@ -33,23 +34,23 @@ pub struct DagStats {
 
 /// DAG engine for managing the directed acyclic graph of blocks
 pub struct DagEngine {
-    vertices: Arc<Mutex<HashMap<[u8; 32], DAGVertex>>>,
-    tips: Arc<Mutex<HashSet<[u8; 32]>>>,
-    genesis_blocks: Arc<Mutex<Vec<[u8; 32]>>>,
+    vertices: Arc<TokioMutex<HashMap<[u8; 32], DAGVertex>>>,
+    tips: Arc<TokioMutex<HashSet<[u8; 32]>>>,
+    genesis_blocks: Arc<TokioMutex<Vec<[u8; 32]>>>,
     max_depth: u64,
-    shard_tips: Arc<Mutex<HashMap<ShardId, Vec<[u8; 32]>>>>,
-    stats: Arc<Mutex<DagStats>>,
+    shard_tips: Arc<TokioMutex<HashMap<ShardId, Vec<[u8; 32]>>>>,
+    stats: Arc<TokioMutex<DagStats>>,
 }
 
 impl DagEngine {
     pub fn new() -> Self {
         let mut engine = Self {
-            vertices: Arc::new(Mutex::new(HashMap::new())),
-            tips: Arc::new(Mutex::new(HashSet::new())),
-            genesis_blocks: Arc::new(Mutex::new(Vec::new())),
+            vertices: Arc::new(TokioMutex::new(HashMap::new())),
+            tips: Arc::new(TokioMutex::new(HashSet::new())),
+            genesis_blocks: Arc::new(TokioMutex::new(Vec::new())),
             max_depth: 0,
-            shard_tips: Arc::new(Mutex::new(HashMap::new())),
-            stats: Arc::new(Mutex::new(DagStats {
+            shard_tips: Arc::new(TokioMutex::new(HashMap::new())),
+            stats: Arc::new(TokioMutex::new(DagStats {
                 total_blocks: 0,
                 tips_count: 0,
                 max_depth: 0,
@@ -61,7 +62,7 @@ impl DagEngine {
         engine
     }
 
-    fn create_genesis_blocks(&mut self) {
+    async fn create_genesis_blocks(&mut self) {
         let genesis_blocks = vec![
             self.create_genesis_block(ShardId(0)),
             self.create_genesis_block(ShardId(1)),
@@ -69,10 +70,10 @@ impl DagEngine {
         ];
         for genesis_block in genesis_blocks {
             let vertex = DAGVertex::new(genesis_block.clone(), Vec::new(), 0);
-            self.vertices.lock().unwrap().insert(genesis_block.block_id, vertex);
-            self.tips.lock().unwrap().insert(genesis_block.block_id);
-            self.genesis_blocks.lock().unwrap().push(genesis_block.block_id);
-            let mut shard_tips = self.shard_tips.lock().unwrap();
+            self.vertices.lock().await.insert(genesis_block.block_id, vertex);
+            self.tips.lock().await.insert(genesis_block.block_id);
+            self.genesis_blocks.lock().await.push(genesis_block.block_id);
+            let mut shard_tips = self.shard_tips.lock().await;
             shard_tips.entry(ShardId(0)).or_default().push(genesis_block.block_id);
         }
     }
@@ -99,50 +100,50 @@ impl DagEngine {
     }
 
     /// Add a new block to the DAG
-    pub fn add_block(&self, block: Block) -> Result<(), String> {
+    pub async fn add_block(&self, block: Block) -> Result<(), String> {
         let block_id = self.compute_block_id(&block);
-        let parents = self.select_parents(&block_id);
+        let parents = self.select_parents(&block_id).await;
         let timestamp = self.get_current_timestamp();
         
         let vertex = DAGVertex::new(block, parents, timestamp);
         
-        let mut vertices = self.vertices.lock().unwrap();
+        let mut vertices = self.vertices.lock().await;
         vertices.insert(block_id, vertex);
         
-        let mut tips = self.tips.lock().unwrap();
+        let mut tips = self.tips.lock().await;
         tips.insert(block_id);
         
         Ok(())
     }
 
     /// Get all tip blocks (blocks with no children)
-    pub fn get_tips(&self) -> Vec<[u8; 32]> {
-        let tips = self.tips.lock().unwrap();
+    pub async fn get_tips(&self) -> Vec<[u8; 32]> {
+        let tips = self.tips.lock().await;
         tips.iter().copied().collect()
     }
 
     /// Get all blocks in the DAG
-    pub fn get_all_blocks(&self) -> Vec<Block> {
-        let vertices = self.vertices.lock().unwrap();
+    pub async fn get_all_blocks(&self) -> Vec<Block> {
+        let vertices = self.vertices.lock().await;
         vertices.values().map(|vertex| vertex.block.clone()).collect()
     }
 
     /// Get block count
-    pub fn block_count(&self) -> usize {
-        let vertices = self.vertices.lock().unwrap();
+    pub async fn block_count(&self) -> usize {
+        let vertices = self.vertices.lock().await;
         vertices.len()
     }
 
     /// Get DAG statistics
-    pub fn get_stats(&self) -> DagStats {
-        let stats = self.stats.lock().unwrap();
+    pub async fn get_stats(&self) -> DagStats {
+        let stats = self.stats.lock().await;
         stats.clone()
     }
 
     /// Update DAG statistics
-    fn update_stats(&mut self) {
-        let vertices = self.vertices.lock().unwrap();
-        let tips = self.tips.lock().unwrap();
+    async fn update_stats(&mut self) {
+        let vertices = self.vertices.lock().await;
+        let tips = self.tips.lock().await;
         
         let total_blocks = vertices.len();
         let tips_count = tips.len();
@@ -158,43 +159,43 @@ impl DagEngine {
         // Calculate max depth (simplified - could be improved with proper depth calculation)
         let max_depth = total_blocks; // Placeholder
 
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self.stats.lock().await;
         stats.total_blocks = total_blocks;
         stats.tips_count = tips_count;
         stats.max_depth = max_depth;
         stats.avg_txs_per_block = avg_txs_per_block;
     }
 
-    pub fn get_shard_tips(&self, shard_id: ShardId) -> Vec<[u8; 32]> {
-        self.shard_tips.lock().unwrap()
+    pub async fn get_shard_tips(&self, shard_id: ShardId) -> Vec<[u8; 32]> {
+        self.shard_tips.lock().await
             .get(&shard_id)
             .cloned()
             .unwrap_or_default()
     }
-    pub fn get_block(&self, block_id: &[u8; 32]) -> Option<Block> {
-        self.vertices.lock().unwrap()
+    pub async fn get_block(&self, block_id: &[u8; 32]) -> Option<Block> {
+        self.vertices.lock().await
             .get(block_id)
             .map(|vertex| vertex.block.clone())
     }
-    pub fn get_parents(&self, block_id: &[u8; 32]) -> Vec<Block> {
-        let vertices = self.vertices.lock().unwrap();
+    pub async fn get_parents(&self, block_id: &[u8; 32]) -> Vec<Block> {
+        let vertices = self.vertices.lock().await;
         vertices.get(block_id)
             .map(|v| v.parents.iter().filter_map(|p| vertices.get(p).map(|v| v.block.clone())).collect())
             .unwrap_or_default()
     }
-    pub fn topological_sort(&self) -> Vec<[u8; 32]> {
-        self.vertices.lock().unwrap().keys().cloned().collect()
+    pub async fn topological_sort(&self) -> Vec<[u8; 32]> {
+        self.vertices.lock().await.keys().cloned().collect()
     }
-    pub fn add_round(&mut self, _round: crate::core::types::Round) {
+    pub async fn add_round(&mut self, _round: crate::core::types::Round) {
         // TODO: Implement round addition logic
     }
-    pub fn block_tips(&self) -> Vec<&crate::core::types::Block> {
+    pub async fn block_tips(&self) -> Vec<&crate::core::types::Block> {
         // TODO: Return block tips if needed
         vec![]
     }
 
-    pub fn get_parent_blocks(&self) -> Vec<[u8; 32]> {
-        self.get_tips()
+    pub async fn get_parent_blocks(&self) -> Vec<[u8; 32]> {
+        self.get_tips().await
     }
 
     fn compute_block_id(&self, block: &Block) -> [u8; 32] {
@@ -213,9 +214,9 @@ impl DagEngine {
         block_id
     }
 
-    fn select_parents(&self, _block_id: &[u8; 32]) -> Vec<[u8; 32]> {
+    async fn select_parents(&self, _block_id: &[u8; 32]) -> Vec<[u8; 32]> {
         // Simple parent selection - use all current tips
-        let tips = self.tips.lock().unwrap();
+        let tips = self.tips.lock().await;
         tips.iter().copied().collect()
     }
 
