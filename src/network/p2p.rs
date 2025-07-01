@@ -4,6 +4,8 @@ use crate::core::dag_engine::DagEngine;
 use crate::core::tx_pool::ShardedTxPool;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
+use std::sync::Arc;
+use tokio::net::UdpSocket;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum P2PMsg {
@@ -25,5 +27,20 @@ pub async fn run_p2p_node(
     // Placeholder implementation - will be expanded later
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+}
+
+pub async fn start(
+    port: u16,
+    tx_pool: Arc<ShardedTxPool>,
+) -> std::io::Result<()> {
+    let addr = format!("0.0.0.0:{}", port);
+    let socket = UdpSocket::bind(&addr).await?;
+    println!("P2P network listening on {}", addr);
+    
+    let mut buf = [0; 1024];
+    loop {
+        let (len, _) = socket.recv_from(&mut buf).await?;
+        // TODO: Process incoming messages and add to tx_pool
     }
 } 

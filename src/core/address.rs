@@ -1,4 +1,4 @@
-use rand::rngs::OsRng;
+use rand::rngs::OsRng; 
 use libp2p_identity;
 use ed25519_dalek::{Keypair, PublicKey};
 use std::fmt;
@@ -41,4 +41,23 @@ pub fn generate_address() -> (Keypair, Address) {
 
 pub fn generate_keypair() -> Keypair {
     Keypair::generate(&mut OsRng)
+}
+
+pub fn generate_deterministic_keypair(seed: &[u8; 32]) -> Keypair {
+    use ed25519_dalek::SecretKey;
+    use ed25519_dalek::SECRET_KEY_LENGTH;
+    
+    // Use the seed directly as the secret key
+    let mut secret_key_bytes = [0u8; SECRET_KEY_LENGTH];
+    secret_key_bytes.copy_from_slice(&seed[..SECRET_KEY_LENGTH]);
+    
+    let secret_key = SecretKey::from_bytes(&secret_key_bytes)
+        .expect("Failed to create secret key from seed");
+    
+    Keypair::from_bytes(&secret_key_bytes)
+        .expect("Failed to create keypair from seed")
+}
+
+pub fn generate_address_from_keypair(keypair: &Keypair) -> Address {
+    Address::from_public_key(&keypair.public)
 } 

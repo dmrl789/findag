@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use crate::storage::state::StateDB;
 use crate::metrics;
 use sha2::{Sha256, Digest};
+use hex;
 
 /// Transaction Pool (Mempool) for FinDAG
 /// - Deduplicates by transaction hash
@@ -45,13 +46,16 @@ impl TxPool {
 
     /// Add a new transaction to the pool. Returns true if added.
     pub fn add_transaction(&mut self, tx: Transaction) -> bool {
+        println!("[DEBUG] TxPool: Attempting to add transaction: from={}, to={}, amount={}", 
+                 tx.from.as_str(), tx.to.as_str(), tx.amount);
+        
         // Cross-shard transaction protocol (scaffold)
         if let (Some(source), Some(dest)) = (tx.source_shard, tx.dest_shard) {
             // TODO: Implement two-phase commit for cross-shard txs
             // Phase 1: Lock/prepare on source shard
             // Phase 2: Commit/acknowledge on destination shard
             // Finalize and update state on both shards
-            println!("[TxPool] Received cross-shard tx: {source:?} -> {dest:?}");
+            println!("[TxPool] Rejected cross-shard tx: {source:?} -> {dest:?}");
             // For now, reject or queue cross-shard txs
             return false;
         }
@@ -59,7 +63,8 @@ impl TxPool {
         let tx_hash = self.compute_tx_hash(&tx);
         if self.transactions.contains_key(&tx_hash) {
             metrics::ERROR_COUNT.with_label_values(&["duplicate_tx"]).inc();
-            println!("[TxPool] Rejected duplicate transaction");
+            println!("[DEBUG] TxPool: Rejected duplicate transaction with hash: 0x{}", 
+                     hex::encode(tx_hash));
             return false; // Duplicate
         }
         
@@ -68,6 +73,7 @@ impl TxPool {
             if let Some((&oldest_time, hashes)) = self.time_index.iter_mut().next() {
                 if let Some(evict_hash) = hashes.pop() {
                     self.transactions.remove(&evict_hash);
+                    println!("[DEBUG] TxPool: Evicted old transaction to make room");
                 }
                 if hashes.is_empty() {
                     self.time_index.remove(&oldest_time);
@@ -82,8 +88,9 @@ impl TxPool {
         let from = tx.from.as_str();
         let amount = tx.amount;
         let bal = self.state_db.get_balance(tx.shard_id.0, from, "USD");
+        println!("[DEBUG] TxPool: Balance check for {}: amount={}, balance={}, shard_id={}", from, amount, bal, tx.shard_id.0);
         if bal < amount {
-            println!("[TxPool] Rejected tx: insufficient funds for {from} ({amount} USD, balance: {bal})");
+            println!("[DEBUG] TxPool: Rejected tx: insufficient funds for {from} ({amount} USD, balance: {bal})");
             metrics::ERROR_COUNT.with_label_values(&["insufficient_funds"]).inc();
             return false;
         }
@@ -92,7 +99,9 @@ impl TxPool {
         let added = self.transactions.insert(tx_hash, tx).is_none();
         if added {
             metrics::MEMPOOL_SIZE.set(self.transactions.len() as i64);
-            println!("[TxPool] Added transaction to pool, size: {}", self.transactions.len());
+            println!("[DEBUG] TxPool: Successfully added transaction, pool size: {}", self.transactions.len());
+        } else {
+            println!("[DEBUG] TxPool: Failed to add transaction (insert returned Some)");
         }
         added
     }
@@ -113,17 +122,21 @@ impl TxPool {
 
     /// Get transactions for block production (oldest first, up to a limit)
     pub fn get_transactions(&self, limit: usize) -> Vec<&Transaction> {
+        println!("[DEBUG] TxPool: get_transactions called with limit={}, pool_size={}", limit, self.transactions.len());
+        
         let mut result = Vec::with_capacity(limit);
         for hashes in self.time_index.values() {
             for hash in hashes {
                 if let Some(tx) = self.transactions.get(hash) {
                     result.push(tx);
                     if result.len() == limit {
+                        println!("[DEBUG] TxPool: Returning {} transactions (reached limit)", result.len());
                         return result;
                     }
                 }
             }
         }
+        println!("[DEBUG] TxPool: Returning {} transactions (all available)", result.len());
         result
     }
 
@@ -141,8 +154,12 @@ pub struct ShardedTxPool {
 
 impl ShardedTxPool {
     pub fn new_with_whitelist_per_shard(max_size_per_shard: usize, asset_whitelist: Arc<Mutex<Vec<String>>>, shard_count: usize) -> Self {
+        Self::new_with_whitelist_per_shard_and_data_dir(max_size_per_shard, asset_whitelist, shard_count, "state_db")
+    }
+
+    pub fn new_with_whitelist_per_shard_and_data_dir(max_size_per_shard: usize, asset_whitelist: Arc<Mutex<Vec<String>>>, shard_count: usize, data_dir: &str) -> Self {
         let mut shards = Vec::with_capacity(shard_count);
-        let state_db = Arc::new(StateDB::new("state_db")); // TODO: Pass real state_db if needed
+        let state_db = Arc::new(StateDB::new(data_dir));
         for _ in 0..shard_count {
             shards.push(Mutex::new(TxPool::new(max_size_per_shard, state_db.clone(), asset_whitelist.clone())));
         }
@@ -154,7 +171,10 @@ impl ShardedTxPool {
     }
     pub fn add_transaction(&self, tx: Transaction) -> bool {
         let shard = self.shard_for_id(tx.shard_id.0);
-        self.shards[shard].lock().unwrap().add_transaction(tx)
+        println!("[DEBUG] ShardedTxPool: Adding transaction to shard {} (shard_id={})", shard, tx.shard_id.0);
+        let result = self.shards[shard].lock().unwrap().add_transaction(tx);
+        println!("[DEBUG] ShardedTxPool: Transaction add result: {}", result);
+        result
     }
     pub fn remove_transaction(&self, tx_hash: &[u8; 32], findag_time: u64, shard_id: u16) {
         let shard = self.shard_for_id(shard_id);
@@ -163,19 +183,29 @@ impl ShardedTxPool {
     pub fn get_transactions(&self, limit: usize, shard_id: u16) -> Vec<Transaction> {
         let mut txs = Vec::new();
         let shard = self.shard_for_id(shard_id);
+        println!("[DEBUG] ShardedTxPool: get_transactions called with limit={}, shard_id={}, target_shard={}", 
+                 limit, shard_id, shard);
+        
         let binding = self.shards[shard].lock().unwrap();
         let shard_txs = binding.get_transactions(limit);
+        println!("[DEBUG] ShardedTxPool: Retrieved {} transactions from shard {}", shard_txs.len(), shard);
+        
         for tx in shard_txs {
             txs.push(tx.clone());
             if txs.len() == limit {
                 break;
             }
         }
+        println!("[DEBUG] ShardedTxPool: Returning {} transactions total", txs.len());
         txs
     }
     pub fn size(&self, shard_id: u16) -> usize {
         let shard = self.shard_for_id(shard_id);
         self.shards[shard].lock().unwrap().size()
+    }
+    pub fn get_balance(&self, shard_id: u16, address: &str, asset: &str) -> u64 {
+        let shard = (shard_id as usize) % self.shard_count;
+        self.shards[shard].lock().unwrap().state_db.get_balance(shard_id, address, asset)
     }
     // For future: add multi-shard aggregation methods
 } 

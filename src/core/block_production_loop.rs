@@ -1,26 +1,18 @@
-use crate::core::block_producer::{BlockProducer, BlockProducerConfig};
-use crate::core::dag_engine::DagEngine;
-use crate::core::tx_pool::ShardedTxPool;
+use crate::core::{
+    block_producer::{BlockProducer, BlockProducerConfig},
+    dag_engine::DagEngine,
+    tx_pool::ShardedTxPool,
+    types::{Block, ShardId},
+};
 use crate::core::address::Address;
-use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
-use crate::dagtimer::hashtimer::compute_hashtimer;
-use ed25519_dalek::Keypair;
-use tokio::time::{sleep, Duration};
-use crate::storage::persistent::PersistMsg;
-use tokio::sync::mpsc::UnboundedSender;
-use crate::metrics;
-use std::time::Instant;
-use crate::core::types::ShardId;
 use crate::consensus::round_finalizer::RoundFinalizer;
-use sha2::{Sha256, Digest};
-use rand::rngs::StdRng;
-use rand::SeedableRng;
-use rand::Rng;
-use rand::rngs::OsRng;
-use serde::{Serialize, Deserialize};
-use crate::consensus::mempool::Mempool;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
+use crate::storage::persistent::PersistMsg;
+use crate::metrics;
+use ed25519_dalek::Keypair;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::time::{sleep, Duration, Instant};
+use hex;
 
 /// Configuration for block production loop
 #[derive(Debug, Clone)]
@@ -30,44 +22,10 @@ pub struct BlockProductionConfig {
     pub shard_id: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Instruction {
-    LoadAsset {
-        asset_id: String,
-        amount: u64,
-        issuer: String,
-    },
-}
-
-fn generate_dummy_instruction() -> Instruction {
-    let mut rng = StdRng::from_rng(OsRng).unwrap();
-    let random_id: u32 = rng.gen_range(1000, 9999);
-    Instruction::LoadAsset {
-        asset_id: format!("DUMMY-ASSET-{}", random_id),
-        amount: 1,
-        issuer: "@test.fd".into(),
-    }
-}
-
-fn build_block_payload() -> Vec<u8> {
-    let dummy = generate_dummy_instruction();
-    bincode::serialize(&vec![dummy]).unwrap()
-}
-
-fn compute_block_hash(payload: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(payload);
-    let result = hasher.finalize();
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&result);
-    hash
-}
-
 /// Runs the block production loop for a specific shard
 pub async fn run_block_production_loop(
     dag: &mut DagEngine,
     tx_pool: &ShardedTxPool,
-    mempool: Arc<Mutex<Mempool>>,
     proposer: Address,
     keypair: &Keypair,
     config: BlockProductionConfig,
@@ -78,15 +36,22 @@ pub async fn run_block_production_loop(
     loop {
         let block_start = Instant::now();
         
+        // DEBUG: Log mempool sizes
+        let tx_pool_size = tx_pool.size(config.shard_id);
+        println!("[DEBUG] TxPool size: {}", tx_pool_size);
+        
         // Get parent blocks before any mutable borrow
-        let parent_blocks: Vec<[u8; 32]> = dag.get_tips();
+        let parent_blocks: Vec<[u8; 32]> = dag.get_tips().await;
         let tips_time = block_start.elapsed();
+        
+        // DEBUG: Log tips contents
+        println!("[DEBUG] Tips count: {}, tips: {:?}", parent_blocks.len(), 
+                 parent_blocks.iter().map(|h| format!("0x{}", hex::encode(h))).collect::<Vec<_>>());
         
         // Create block producer without holding mempool lock
         let mut block_producer = BlockProducer::new(
             dag,
             tx_pool,
-            mempool.clone(), // Pass the Arc<Mutex<Mempool>> directly
             proposer.clone(),
             keypair,
             BlockProducerConfig {
@@ -105,34 +70,20 @@ pub async fn run_block_production_loop(
         let round_duration_ns = 16_000_000_000u64; // 16 seconds in nanoseconds
         let current_round = findag_time / round_duration_ns;
         
-        // Build block payload with dummy instruction
-        let payload = build_block_payload();
-        let block_hash = compute_block_hash(&payload);
-        
-        // Compute HashTimer for the block (using FinDAG Time, parent block ids, and a nonce)
-        let mut block_content = Vec::new();
-        for parent in &parent_blocks {
-            block_content.extend_from_slice(parent);
-        }
-        let nonce = 0u32; // You may want to increment or randomize this
-        let hashtimer = compute_hashtimer(findag_time, &block_content, nonce);
-        
         // Only fetch transactions for this shard
         let produced = block_producer.produce_block().await;
         let production_time = block_start.elapsed();
         
         if let Some(block) = produced {
-            println!("[Round {}][Shard {}] Produced block: 0x{} at FinDAG Time {} with HashTimer: 0x{} (Payload: {} bytes)", 
+            println!("[Round {}][Shard {}] Produced block: 0x{} at FinDAG Time {} with HashTimer: 0x{} ({} txs)", 
                 current_round, config.shard_id, 
-                block_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
+                hex::encode(block.block_id),
                 findag_time, 
-                hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
-                payload.len());
-            
+                hex::encode(block.hashtimer),
+                block.transactions.len());
             // Log block producer stats
             println!("[BlockProducer] Round {}: {} transactions", 
                      block_producer.get_current_round(), block_producer.get_transaction_count());
-            
             // TODO: Use round_finalizer for consensus/finality in this shard
             // Persist the block asynchronously
             let _ = persist_tx.send(PersistMsg::Block(block.clone()));
@@ -142,17 +93,29 @@ pub async fn run_block_production_loop(
             metrics::TPS.set(block.transactions.len() as i64);
             metrics::TX_TOTAL.inc_by(block.transactions.len() as u64);
             metrics::BLOCK_LATENCY.observe(block_start.elapsed().as_secs_f64());
-            // metrics::PER_ASSET_TPS.with_label_values(&[&tx.currency]).inc();
         } else {
             println!("[Round {}][Shard {}] No block produced - no transactions available | Timing: tips={:?}, producer={:?}, production={:?}", 
                 current_round, config.shard_id, tips_time, producer_time, production_time);
+            
+            // DEBUG: Additional diagnostics for why no block was produced
+            if tx_pool_size > 0 {
+                println!("[DEBUG] WARNING: TxPool has {} transactions but no block was produced!", tx_pool_size);
+                println!("[DEBUG] This suggests a bug in the block producer logic");
+            }
         }
         
-        let sleep_start = Instant::now();
-        sleep(Duration::from_millis(config.interval_ms)).await;
+        // Calculate proper sleep time to maintain the intended interval
+        let elapsed = block_start.elapsed();
+        let sleep_duration = if elapsed.as_millis() < config.interval_ms as u128 {
+            Duration::from_millis(config.interval_ms - elapsed.as_millis() as u64)
+        } else {
+            Duration::from_millis(1) // Minimum sleep if we're already over the interval
+        };
+        
+        sleep(sleep_duration).await;
         let total_time = block_start.elapsed();
         println!("[Shard {}] Loop timing: total={:?}, sleep={:?}, interval={}ms", 
-            config.shard_id, total_time, sleep_start.elapsed(), config.interval_ms);
+            config.shard_id, total_time, sleep_duration, config.interval_ms);
     }
 }
 

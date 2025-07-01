@@ -16,6 +16,7 @@ use serde::{Serialize, Deserialize};
 use rand::Rng;
 use hex;
 use base64::Engine;
+use clap::Parser;
 
 use findag::core::dag_engine::DagEngine;
 use findag::core::tx_pool::ShardedTxPool;
@@ -33,13 +34,31 @@ use findag::tools::run_quorum_demo;
 use findag::tools::run_handle_wallet;
 use std::env;
 
+use findag::api::http_server;
+use findag::network::p2p;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// HTTP API port
+    #[arg(long, default_value = "3001")]
+    port: u16,
+
+    /// Data directory
+    #[arg(long, default_value = "state_db")]
+    data_dir: String,
+
+    /// P2P network port
+    #[arg(long, default_value = "9001")]
+    p2p_port: u16,
+}
+
 #[derive(Clone)]
 struct AppState {
-    dag: Arc<Mutex<DagEngine>>,
     tx_pool: Arc<ShardedTxPool>,
-    mempool: Arc<Mutex<Mempool>>,
-    address: Address,
+    dag: Arc<Mutex<DagEngine>>,
     propagator: Arc<NetworkPropagator>,
+    address: Address,
     time_manager: Arc<FinDAGTimeManager>,
 }
 
@@ -65,13 +84,25 @@ struct TransactionRequest {
     pub shard_id: u16,
 }
 
-async fn health() -> StatusCode {
-    StatusCode::OK
+#[debug_handler]
+async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let dag_stats = state.dag.lock().await.get_stats().await;
+    let tx_pool_size = state.tx_pool.size(0); // shard 0
+    let current_time = state.time_manager.get_findag_time();
+    
+    Json(json!({
+        "status": "healthy",
+        "address": state.address.0,
+        "dag_stats": dag_stats,
+        "tx_pool_size": tx_pool_size,
+        "current_time": current_time,
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
 }
 
 async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     let dag = state.dag.lock().await;
-    let block_count = dag.block_count() as u64;
+    let block_count = dag.block_count().await as u64;
     let peers: Vec<String> = vec![]; // TODO: add real peer info
     Json(json!({
         "address": state.address.0,
@@ -81,46 +112,50 @@ async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
 }
 
 #[debug_handler]
-async fn submit_transaction(
-    State(state): State<AppState>, 
-    Json(req): Json<TransactionRequest>
-) -> (StatusCode, Json<serde_json::Value>) {
-    // Parse and validate the transaction
-    let tx = match parse_and_validate_transaction(&req) {
-        Ok(tx) => tx,
-        Err(e) => {
-            eprintln!("Rejecting tx: {}", e);
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
-        }
-    };
-
-    // Add to mempool (async)
-    state.mempool.lock().await.add(tx).await;
-    println!("Added transaction to mempool: from={}, to={}, amount={}", req.from, req.to, req.amount);
-    (StatusCode::OK, Json(json!({"status": "ok"})))
-}
-
-fn parse_and_validate_transaction(req: &TransactionRequest) -> Result<Transaction, String> {
-    // Parse public key from bytes
-    let public_key = ed25519_dalek::PublicKey::from_bytes(&req.public_key)
-        .map_err(|_| "Invalid public key format".to_string())?;
-
-    // Parse signature from bytes
-    let signature = ed25519_dalek::Signature::from_bytes(&req.signature)
-        .map_err(|_| "Invalid signature format".to_string())?;
-
-    // Create canonical message to verify
-    let message = format!("{}{}{}", req.from, req.to, req.amount);
+async fn submit_transaction(State(state): State<AppState>, Json(req): Json<TransactionRequest>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    println!("[DEBUG] HTTP API: Received transaction request: {:?}", req);
+    
+    // Validate the transaction
+    let from_address = Address(req.from.clone());
+    let to_address = Address(req.to.clone());
     
     // Verify signature
-    if public_key.verify(message.as_bytes(), &signature).is_err() {
-        return Err("Invalid signature".to_string());
+    let message = format!("{}{}{}", req.from, req.to, req.amount);
+    println!("[DEBUG] HTTP API: Verifying signature for message: '{}'", message);
+    let signature = match ed25519_dalek::Signature::from_bytes(&req.signature) {
+        Ok(sig) => sig,
+        Err(e) => {
+            println!("[DEBUG] HTTP API: Invalid signature format: {:?}", e);
+            return Err((StatusCode::BAD_REQUEST, Json(json!({
+                "error": "Invalid signature format"
+            }))));
+        }
+    };
+    
+    let public_key = match ed25519_dalek::PublicKey::from_bytes(&req.public_key) {
+        Ok(pk) => pk,
+        Err(e) => {
+            println!("[DEBUG] HTTP API: Invalid public key format: {:?}", e);
+            return Err((StatusCode::BAD_REQUEST, Json(json!({
+                "error": "Invalid public key format"
+            }))));
+        }
+    };
+    
+    match public_key.verify(message.as_bytes(), &signature) {
+        Ok(_) => println!("[DEBUG] HTTP API: Signature verification passed"),
+        Err(e) => {
+            println!("[DEBUG] HTTP API: Signature verification failed: {:?}", e);
+            return Err((StatusCode::BAD_REQUEST, Json(json!({
+                "error": "Signature verification failed"
+            }))));
+        }
     }
-
-    // Create the transaction
-    let tx = Transaction {
-        from: Address(req.from.clone()),
-        to: Address(req.to.clone()),
+    
+    // Create transaction
+    let transaction = Transaction {
+        from: from_address.clone(),
+        to: to_address.clone(),
         amount: req.amount,
         payload: req.payload.clone(),
         findag_time: req.findag_time,
@@ -133,29 +168,47 @@ fn parse_and_validate_transaction(req: &TransactionRequest) -> Result<Transactio
             }
             ht
         },
-        signature,
-        public_key,
+        public_key: public_key.clone(),
         shard_id: ShardId(req.shard_id),
+        signature,
         source_shard: None,
         dest_shard: None,
         target_chain: None,
         bridge_protocol: None,
     };
-
-    Ok(tx)
+    
+    println!("[DEBUG] HTTP API: Created transaction, adding to tx_pool");
+    // Add to transaction pool
+    let added = state.tx_pool.add_transaction(transaction);
+    if added {
+        println!("[DEBUG] HTTP API: Transaction successfully added to tx_pool");
+        Ok(Json(json!({
+            "status": "success",
+            "message": "Transaction submitted successfully"
+        })))
+    } else {
+        println!("[DEBUG] HTTP API: Transaction rejected by tx_pool (likely insufficient funds or duplicate)");
+        // Print the sender's balance for debugging
+        let bal = state.tx_pool.get_balance(req.shard_id, &req.from, "USD");
+        println!("[DEBUG] HTTP API: Sender balance for {}: {} USD", req.from, bal);
+        Err((StatusCode::BAD_REQUEST, Json(json!({
+            "error": "Transaction rejected",
+            "balance": bal
+        }))))
+    }
 }
 
 #[debug_handler]
 async fn get_blocks(State(state): State<AppState>) -> Json<Vec<Block>> {
     let dag = state.dag.lock().await;
-    let blocks = dag.get_all_blocks();
+    let blocks = dag.get_all_blocks().await;
     Json(blocks)
 }
 
 #[debug_handler]
 async fn get_dag(State(state): State<AppState>) -> Json<serde_json::Value> {
     let dag = state.dag.lock().await;
-    let stats = dag.get_stats();
+    let stats = dag.get_stats().await;
     Json(json!(stats))
 }
 
@@ -175,200 +228,137 @@ async fn get_hashtimer_status(State(state): State<AppState>) -> Json<serde_json:
 
 #[debug_handler]
 async fn get_mempool_status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mempool_len = state.mempool.lock().await.len().await;
     let tx_pool_size = state.tx_pool.size(0);
     Json(json!({
-        "mempool_size": mempool_len,
         "tx_pool_size": tx_pool_size,
+        "shard_id": 0,
         "timestamp": chrono::Utc::now().to_rfc3339(),
     }))
 }
 
-#[tokio::main]
-async fn main() {
-    let args: Vec<String> = env::args().collect();
-    
-    // Handle CLI commands
-    if args.len() > 1 {
-        match args[1].as_str() {
-            "quorum-demo" => {
-                println!("Running FinDAG Quorum Rotation Demo...\n");
-                run_quorum_demo();
-                return;
-            }
-            "handle-wallet" => {
-                println!("Running FinDAG Handle Wallet Demo...\n");
-                run_handle_wallet();
-                return;
-            }
-            "help" | "--help" | "-h" => {
-                println!("FinDAG - Permissioned Asset Tracking DAG Blockchain");
-                println!();
-                println!("Available commands:");
-                println!("  quorum-demo    - Run quorum rotation system demo");
-                println!("  handle-wallet  - Run handle wallet system demo");
-                println!("  help           - Show this help message");
-                println!("  (no args)      - Start FinDAG node");
-                println!();
-                println!("Examples:");
-                println!("  cargo run -- quorum-demo");
-                println!("  cargo run -- handle-wallet");
-                println!("  cargo run -- help");
-                println!("  cargo run --");
-                return;
-            }
-            _ => {
-                println!("Unknown command: {}", args[1]);
-                println!("Run 'cargo run -- help' for available commands");
-                return;
-            }
+#[debug_handler]
+async fn get_mempool_transactions(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let transactions = state.tx_pool.get_transactions(1000, 0); // Get up to 1000 transactions from shard 0
+    let tx_data: Vec<serde_json::Value> = transactions.iter().map(|tx| {
+        json!({
+            "from": tx.from.as_str(),
+            "to": tx.to.as_str(),
+            "amount": tx.amount,
+            "findag_time": tx.findag_time,
+            "hashtimer": format!("0x{}", tx.hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+            "shard_id": tx.shard_id.0,
+        })
+    }).collect();
+    Json(json!({
+        "transactions": tx_data,
+        "count": tx_data.len(),
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    }))
+}
+
+#[debug_handler]
+async fn get_recent_transactions(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let dag = state.dag.lock().await;
+    let blocks = dag.get_all_blocks().await;
+    // Get transactions from the last 10 blocks
+    let recent_blocks = blocks.iter().rev().take(10).collect::<Vec<_>>();
+    let blocks_checked = recent_blocks.len();
+    let mut all_transactions = Vec::new();
+    for block in &recent_blocks {
+        for tx in &block.transactions {
+            all_transactions.push(json!({
+                "block_hash": format!("0x{}", block.hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+                "from": tx.from.0,
+                "to": tx.to.0,
+                "amount": tx.amount,
+                "findag_time": tx.findag_time,
+                "hashtimer": format!("0x{}", tx.hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+                "shard_id": tx.shard_id.0,
+            }));
         }
     }
+    Json(json!({
+        "transactions": all_transactions,
+        "count": all_transactions.len(),
+        "blocks_checked": blocks_checked,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    }))
+}
 
-    // Start FinDAG node
-    println!("FinDAG node is starting...");
+#[debug_handler]
+async fn get_simple_transactions(State(state): State<AppState>) -> Json<serde_json::Value> {
+    // Get tx_pool transactions
+    let transactions = state.tx_pool.get_transactions(1000, 0); // Get up to 1000 transactions from shard 0
+    
+    // Convert to JSON format
+    let tx_data: Vec<serde_json::Value> = transactions.iter().map(|tx| {
+        json!({
+            "from": tx.from.as_str(),
+            "to": tx.to.as_str(),
+            "amount": tx.amount,
+            "findag_time": tx.findag_time,
+            "hashtimer": format!("0x{}", tx.hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+            "status": "pending"
+        })
+    }).collect();
 
-    // Initialize metrics
-    findag::metrics::register_metrics();
+    Json(json!({
+        "transactions": tx_data,
+        "count": tx_data.len(),
+        "source": "tx_pool",
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    }))
+}
 
-    // --- Node identity ---
-    let (keypair, address) = generate_address();
-    let keypair: Arc<Keypair> = Arc::new(keypair);
-    println!("Node address: {}", address.0);
+#[debug_handler]
+async fn get_transaction_summary(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let tx_pool_size = state.tx_pool.size(0);
+    
+    Json(json!({
+        "tx_pool_transactions": tx_pool_size,
+        "total_transactions_processed": "unknown", // Would need to track this
+        "node_status": "running",
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    }))
+}
 
-    // --- DAG engine ---
-    let dag = Arc::new(Mutex::new(DagEngine::new()));
+// TODO: Implement get_transactions_by_block endpoint
+// This would need to be implemented to find a specific block by hash
 
-    // --- Sharded mempool ---
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+
+    // Initialize the node with the parsed arguments
+    println!("Starting FinDAG node with the following configuration:");
+    println!("HTTP Port: {}", args.port);
+    println!("Data Directory: {}", args.data_dir);
+    println!("P2P Port: {}", args.p2p_port);
+
+    // Create data directory if it doesn't exist
+    if let Err(e) = std::fs::create_dir_all(&args.data_dir) {
+        eprintln!("Failed to create data directory '{}': {}", args.data_dir, e);
+        return;
+    }
+
+    // Initialize node components
     let asset_whitelist = Arc::new(std::sync::Mutex::new(vec!["USD".to_string()]));
-    let tx_pool = Arc::new(ShardedTxPool::new_with_whitelist_per_shard(100_000, asset_whitelist, 1));
+    let tx_pool = Arc::new(ShardedTxPool::new_with_whitelist_per_shard_and_data_dir(
+        100_000, 
+        asset_whitelist, 
+        1, 
+        &args.data_dir
+    ));
 
-    // --- New Mempool ---
-    let mempool = Arc::new(Mutex::new(Mempool::new()));
+    // Start HTTP server
+    if let Err(e) = findag::api::http_server::start(args.port, tx_pool.clone()).await {
+        eprintln!("Failed to start HTTP server: {}", e);
+        return;
+    }
 
-    // --- Time manager ---
-    let time_manager = Arc::new(FinDAGTimeManager::new());
-
-    // --- Hashtimer logging task ---
-    let time_manager_clone = time_manager.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
-        loop {
-            interval.tick().await;
-            let current_time = time_manager_clone.get_findag_time();
-            let round_duration_ns = 16_000_000_000u64; // 16 seconds in nanoseconds
-            let current_round = current_time / round_duration_ns;
-            let hashtimer = compute_hashtimer(current_time, b"periodic_log", 0);
-            println!("[Round {}][HashTimer] Current FinDAG Time: {}, Hash: 0x{}", 
-                current_round, current_time, 
-                hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>());
-        }
-    });
-
-    // --- Network propagator ---
-    let udp_port = std::env::var("FINDAG_UDP_PORT").unwrap_or_else(|_| "9000".to_string());
-    let udp_bind = format!("0.0.0.0:{}", udp_port);
-    let peer_str = std::env::var("FINDAG_PEERS").unwrap_or_else(|_| "127.0.0.1:9001".to_string());
-    let peers: Vec<SocketAddr> = peer_str.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-    let propagator = Arc::new(NetworkPropagator::new(&udp_bind, peers).await.unwrap());
-
-    // --- Spawn gossip listener ---
-    let dag_clone = dag.clone();
-    let tx_pool_clone = tx_pool.clone();
-    let propagator_clone = propagator.clone();
-    tokio::spawn(async move {
-        propagator_clone.listen(move |msg| {
-            match msg {
-                GossipMsg::NewTransaction(stx) => {
-                    // Convert to Transaction and add to pool
-                    if let Ok(tx) = Transaction::try_from(stx) {
-                        tx_pool_clone.add_transaction(tx);
-                    }
-                }
-                GossipMsg::NewBlock(sblock) => {
-                    // Convert to Block and add to DAG
-                    if let Ok(block) = Block::try_from(sblock) {
-                        let mut dag = dag_clone.blocking_lock();
-                        let _ = dag.add_block(block);
-                    }
-                }
-                _ => {}
-            }
-        }).await;
-    });
-
-    // --- Block production loop ---
-    let dag_clone = dag.clone();
-    let tx_pool_clone = tx_pool.clone();
-    let mempool_clone = mempool.clone();
-    let time_manager_clone = time_manager.clone();
-    let keypair_clone = keypair.clone();
-    let address_clone = address.clone();
-    let propagator_clone = propagator.clone();
-    tokio::spawn(async move {
-        let (persist_tx, _persist_rx) = unbounded_channel();
-        let mut validator_set = ValidatorSet::new();
-        
-        loop {
-            let round_finalizer = RoundFinalizer::dummy(&mut validator_set);
-            let config = BlockProductionConfig {
-                max_block_txs: 100,
-                interval_ms: 100, // 10 blocks/sec for faster transactions
-                shard_id: 0, // single-shard
-            };
-            
-            // Enhanced block production with mempool
-            run_block_production_loop(
-                &mut *dag_clone.lock().await,
-                &tx_pool_clone,
-                mempool_clone.clone(),
-                address_clone.clone(),
-                &keypair_clone,
-                config,
-                &time_manager_clone,
-                persist_tx.clone(),
-                round_finalizer,
-            ).await;
-            
-            // After producing a block, broadcast it
-            if let Some(block) = dag_clone.lock().await.get_all_blocks().last() {
-                let sblock: SerializableBlock = block.clone().into();
-                let msg = GossipMsg::NewBlock(sblock);
-                propagator_clone.broadcast(&msg).await;
-            }
-        }
-    });
-
-    // --- HTTP API ---
-    let app_state = AppState {
-        dag: dag.clone(),
-        tx_pool: tx_pool.clone(),
-        mempool: Arc::new(Mutex::new(Mempool::new())),
-        address: address.clone(),
-        propagator: propagator.clone(),
-        time_manager: time_manager.clone(),
-    };
-
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/node", get(node_info))
-        .route("/tx", post(submit_transaction))
-        .route("/blocks", get(get_blocks))
-        .route("/dag", get(get_dag))
-        .route("/hashtimer-status", get(get_hashtimer_status))
-        .route("/mempool-status", get(get_mempool_status))
-        .layer(cors)
-        .with_state(app_state);
-
-    let port = std::env::var("FINDAG_HTTP_PORT").unwrap_or_else(|_| "3000".to_string());
-    let addr = format!("0.0.0.0:{}", port);
-    println!("HTTP API listening on {}", addr);
-
-    let listener = TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    // Start P2P network
+    if let Err(e) = findag::network::p2p::start(args.p2p_port, tx_pool).await {
+        eprintln!("Failed to start P2P network: {}", e);
+        return;
+    }
 } 

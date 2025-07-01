@@ -48,13 +48,13 @@ if (-not (Test-Path $findagPath)) {
 }
 
 # Set environment variables
-$env:FINDAG_BIND_ADDR = "0.0.0.0:$HTTP_PORT"
+$env:FINDAG_HTTP_PORT = $HTTP_PORT
 $env:FINDAG_PEERS = $PEERS
 $env:FINDAG_UDP_PORT = $P2P_PORT
 $env:NODE_ID = $NODE_NAME
 
 Write-Host "✅ Environment variables set:" -ForegroundColor Green
-Write-Host "   FINDAG_BIND_ADDR = $env:FINDAG_BIND_ADDR" -ForegroundColor White
+Write-Host "   FINDAG_HTTP_PORT = $env:FINDAG_HTTP_PORT" -ForegroundColor White
 Write-Host "   FINDAG_PEERS = $env:FINDAG_PEERS" -ForegroundColor White
 Write-Host "   FINDAG_UDP_PORT = $env:FINDAG_UDP_PORT" -ForegroundColor White
 Write-Host "   NODE_ID = $env:NODE_ID" -ForegroundColor White

@@ -29,6 +29,9 @@ use crate::core::tx_pool::ShardedTxPool;
 use crate::core::types::SerializableTransaction;
 use crate::network::propagation::NetworkPropagator;
 use rand;
+use tokio::net::TcpListener;
+use axum::response::IntoResponse;
+use axum::extract::State;
 
 static mut VALIDATOR_SET: Option<Arc<Mutex<ValidatorSet>>> = None;
 static mut STORAGE: Option<Arc<crate::storage::persistent::PersistentStorage>> = None;
@@ -150,26 +153,39 @@ async fn post_tx(Json(tx_data): Json<serde_json::Value>) -> Json<serde_json::Val
         
         // Validate signature
         let message = format!("{}{}{}", signed_tx.from, signed_tx.to, signed_tx.amount);
+        println!("[DEBUG] Verifying signature for message: '{}'", message);
+        println!("[DEBUG] Public key length: {}, Signature length: {}", 
+                signed_tx.public_key.len(), signed_tx.signature.len());
+        
         let public_key = match ed25519_dalek::PublicKey::from_bytes(&signed_tx.public_key) {
-            Ok(pk) => pk,
-            Err(_) => {
-                println!("Invalid public key format");
+            Ok(pk) => {
+                println!("[DEBUG] Public key parsed successfully");
+                pk
+            },
+            Err(e) => {
+                println!("[DEBUG] Invalid public key format: {:?}", e);
                 return Json(serde_json::json!({ "error": "Invalid public key format" }));
             }
         };
         
         let signature = match ed25519_dalek::Signature::from_bytes(&signed_tx.signature) {
-            Ok(sig) => sig,
-            Err(_) => {
-                println!("Invalid signature format");
+            Ok(sig) => {
+                println!("[DEBUG] Signature parsed successfully");
+                sig
+            },
+            Err(e) => {
+                println!("[DEBUG] Invalid signature format: {:?}", e);
                 return Json(serde_json::json!({ "error": "Invalid signature format" }));
             }
         };
         
         // Verify signature
-        if public_key.verify(message.as_bytes(), &signature).is_err() {
-            println!("Signature verification failed");
-            return Json(serde_json::json!({ "error": "Signature verification failed" }));
+        match public_key.verify(message.as_bytes(), &signature) {
+            Ok(_) => println!("[DEBUG] Signature verification successful"),
+            Err(e) => {
+                println!("[DEBUG] Signature verification failed: {:?}", e);
+                return Json(serde_json::json!({ "error": "Signature verification failed" }));
+            }
         }
         
         // Create core Transaction
@@ -197,8 +213,32 @@ async fn post_tx(Json(tx_data): Json<serde_json::Value>) -> Json<serde_json::Val
             bridge_protocol: None,
         };
         
+        // Add comprehensive debugging for transaction processing
+        println!("[DEBUG] Processing signed transaction:");
+        println!("[DEBUG]   From: {}", signed_tx.from);
+        println!("[DEBUG]   To: {}", signed_tx.to);
+        println!("[DEBUG]   Amount: {}", signed_tx.amount);
+        println!("[DEBUG]   Shard ID: {}", signed_tx.shard_id);
+        println!("[DEBUG]   Signature length: {}", signed_tx.signature.len());
+        println!("[DEBUG]   Public key length: {}", signed_tx.public_key.len());
+        println!("[DEBUG]   Payload length: {}", signed_tx.payload.len());
+        println!("[DEBUG]   FindAG Time: {}", signed_tx.findag_time);
+        println!("[DEBUG]   HashTimer: {:02x?}", &signed_tx.hashtimer);
+        
+        // Validate transaction structure
+        if signed_tx.signature.len() != 64 {
+            println!("[DEBUG] REJECTION: Invalid signature length {}", signed_tx.signature.len());
+            return Json(serde_json::json!({ "error": "Invalid signature length" }));
+        }
+        
+        if signed_tx.public_key.len() != 32 {
+            println!("[DEBUG] REJECTION: Invalid public key length {}", signed_tx.public_key.len());
+            return Json(serde_json::json!({ "error": "Invalid public key length" }));
+        }
+        
         // Add to transaction pool
         let tx_pool = unsafe { TX_POOL.as_ref().unwrap() };
+        println!("[DEBUG] Adding transaction to pool...");
         let added = tx_pool.add_transaction(core_tx.clone());
         
         if added {
@@ -209,13 +249,19 @@ async fn post_tx(Json(tx_data): Json<serde_json::Value>) -> Json<serde_json::Val
                 propagator.broadcast(&msg).await;
             }
             
+            println!("[DEBUG] SUCCESS: Transaction added to pool");
             println!("Processed signed tx: from={}, to={}, amount={} (shard_id={})", 
                     signed_tx.from, signed_tx.to, signed_tx.amount, signed_tx.shard_id);
             Json(serde_json::json!({ "status": "ok", "shard_id": signed_tx.shard_id, "message": "Signed transaction added to pool" }))
         } else {
             metrics::ERROR_COUNT.with_label_values(&["tx_rejected"]).inc();
-            println!("Transaction rejected by pool");
-            Json(serde_json::json!({ "error": "Transaction rejected by pool", "shard_id": signed_tx.shard_id }))
+            println!("[DEBUG] REJECTION: Transaction rejected by pool");
+            
+            // Get detailed rejection reason from pool
+            let sender_balance = tx_pool.get_balance(ShardId(signed_tx.shard_id), &signed_tx.from, "USD");
+            println!("[DEBUG] Sender balance check: {} has {} USD", signed_tx.from, sender_balance);
+            
+            Json(serde_json::json!({ "error": "Transaction rejected", "shard_id": signed_tx.shard_id }))
         }
     } else {
         // Try to parse as simple ApiTransaction
@@ -253,8 +299,17 @@ async fn post_tx(Json(tx_data): Json<serde_json::Value>) -> Json<serde_json::Val
                 bridge_protocol: None,
             };
             
+            // Add comprehensive debugging for simple transaction processing
+            println!("[DEBUG] Processing simple transaction:");
+            println!("[DEBUG]   From: {}", tx.from);
+            println!("[DEBUG]   To: {}", tx.to);
+            println!("[DEBUG]   Amount: {}", tx.amount);
+            println!("[DEBUG]   Currency: {}", tx.currency);
+            println!("[DEBUG]   Shard ID: {}", shard_id);
+            
             // Add to transaction pool
             let tx_pool = unsafe { TX_POOL.as_ref().unwrap() };
+            println!("[DEBUG] Adding simple transaction to pool...");
             let added = tx_pool.add_transaction(core_tx.clone());
             
             if added {
@@ -265,11 +320,18 @@ async fn post_tx(Json(tx_data): Json<serde_json::Value>) -> Json<serde_json::Val
                     propagator.broadcast(&msg).await;
                 }
                 
+                println!("[DEBUG] SUCCESS: Simple transaction added to pool");
                 println!("Processed simple tx: {:?} (shard_id={})", tx, shard_id);
                 Json(serde_json::json!({ "status": "ok", "shard_id": shard_id, "message": "Transaction added to pool" }))
             } else {
                 metrics::ERROR_COUNT.with_label_values(&["tx_rejected"]).inc();
-                Json(serde_json::json!({ "error": "Transaction rejected by pool", "shard_id": shard_id }))
+                println!("[DEBUG] REJECTION: Simple transaction rejected by pool");
+                
+                // Get detailed rejection reason from pool
+                let sender_balance = tx_pool.get_balance(ShardId(shard_id), &tx.from, "USD");
+                println!("[DEBUG] Sender balance check: {} has {} USD", tx.from, sender_balance);
+                
+                Json(serde_json::json!({ "error": "Transaction rejected", "shard_id": shard_id }))
             }
         } else {
             println!("Invalid transaction format received");
@@ -563,6 +625,35 @@ pub async fn run_http_server() {
         .serve(app.layer(RateLimitLayer::new(10, Duration::from_secs(1))).into_make_service())
         .await
         .unwrap();
+}
+
+pub async fn start(
+    port: u16,
+    tx_pool: Arc<ShardedTxPool>,
+) -> std::io::Result<()> {
+    let app = Router::new()
+        .route("/health", get(health))
+        .route("/tx", post(submit_transaction))
+        .with_state(tx_pool);
+
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = TcpListener::bind(&addr).await?;
+    println!("HTTP server listening on {}", addr);
+    
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+async fn health() -> impl IntoResponse {
+    "OK"
+}
+
+async fn submit_transaction(
+    State(tx_pool): State<Arc<ShardedTxPool>>,
+    Json(tx): Json<Transaction>,
+) -> impl IntoResponse {
+    tx_pool.add_transaction(tx);
+    "Transaction submitted"
 }
 
 // Example usage:
