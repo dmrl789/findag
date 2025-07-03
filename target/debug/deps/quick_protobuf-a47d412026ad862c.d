@@ -1,0 +1,10 @@
+C:\Users\yuyby\FinDAG\target\debug\deps\quick_protobuf-a47d412026ad862c.d: C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\lib.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\errors.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\message.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\reader.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\sizeofs.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\writer.rs
+
+C:\Users\yuyby\FinDAG\target\debug\deps\libquick_protobuf-a47d412026ad862c.rmeta: C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\lib.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\errors.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\message.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\reader.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\sizeofs.rs C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\writer.rs
+
+C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\lib.rs:
+C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\errors.rs:
+C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\message.rs:
+C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\reader.rs:
+C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\sizeofs.rs:
+C:\Users\yuyby\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\quick-protobuf-0.8.1\src\writer.rs:

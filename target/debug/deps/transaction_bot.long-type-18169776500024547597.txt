@@ -1,0 +1,1 @@
+std::ops::Range<{integer}>: SampleBorrow<std::ops::Range<{integer}>>
