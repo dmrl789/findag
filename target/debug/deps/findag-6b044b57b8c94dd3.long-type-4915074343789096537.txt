@@ -1,2 +1,0 @@
-fn(Json<BridgeTx>) -> impl Future<Output = Json<serde_json::Value>> {outbound_bridge}
-fn(Json<BridgeTx>) -> impl Future<Output = Json<serde_json::Value>> {outbound_bridge}: Handler<_, _>
