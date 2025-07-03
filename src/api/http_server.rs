@@ -32,6 +32,10 @@ use rand;
 use tokio::net::TcpListener;
 use axum::response::IntoResponse;
 use axum::extract::State;
+use std::env;
+use axum::Extension;
+use tokio_rustls::rustls::{ServerConfig, Certificate, PrivateKey};
+use tokio_rustls::rustls::pki_types::CertificateDer;
 
 static mut VALIDATOR_SET: Option<Arc<Mutex<ValidatorSet>>> = None;
 static mut STORAGE: Option<Arc<crate::storage::persistent::PersistentStorage>> = None;
@@ -39,7 +43,12 @@ static mut GOVERNANCE_STATE: Option<Arc<Mutex<crate::consensus::governance::Gove
 static mut TX_POOL: Option<Arc<ShardedTxPool>> = None;
 static mut NETWORK_PROPAGATOR: Option<Arc<NetworkPropagator>> = None;
 const ADMIN_TOKEN: &str = "changeme";
-const JWT_SECRET: &[u8] = b"changeme_jwt_secret"; // Replace with secure secret in production
+static JWT_SECRET: Lazy<String> = Lazy::new(|| {
+    env::var("JWT_SECRET").unwrap_or_else(|_| {
+        let secret: [u8; 32] = rand::random();
+        hex::encode(secret)
+    })
+});
 static BRIDGE_MANAGER: Lazy<BridgeManager> = Lazy::new(|| BridgeManager::new());
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -102,7 +111,7 @@ struct Claims {
 fn validate_jwt(token: &str, required_role: &str) -> Result<TokenData<Claims>, JwtError> {
     let data = decode::<Claims>(
         token,
-        &DecodingKey::from_secret(JWT_SECRET),
+        &DecodingKey::from_secret(JWT_SECRET.as_ref().map(|s| s.as_bytes()).unwrap()),
         &Validation::new(Algorithm::HS256),
     )?;
     if data.claims.role != required_role {
@@ -586,6 +595,22 @@ pub fn init_http_server(
     }
 }
 
+async fn load_tls_config() -> Arc<ServerConfig> {
+    let cert = env::var("TLS_CERT_PATH").expect("TLS_CERT_PATH not set");
+    let key = env::var("TLS_KEY_PATH").expect("TLS_KEY_PATH not set");
+    
+    let cert_chain = std::fs::read(cert).unwrap();
+    let key_der = std::fs::read(key).unwrap();
+    
+    let certs = vec![CertificateDer::from(cert_chain)];
+    let key = PrivateKey(key_der);
+    
+    ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .unwrap()
+}
+
 pub async fn run_http_server() {
     // In real use, pass Arc<Mutex<>> from main
     unsafe {
@@ -619,8 +644,9 @@ pub async fn run_http_server() {
         .route("/identity/register", post(register_identity))
         .route("/block/:id", get(get_block))
         .route("/block/:id/merkle_proof/:tx_hash", get(get_merkle_proof));
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
-    println!("HTTP API listening on http://{}", addr);
+    let tls_config = load_tls_config().await;
+    let addr = SocketAddr::from(([127, 0, 0, 1], 443));
+    println!("HTTP API listening on https://{}", addr);
     axum::Server::bind(&addr)
         .serve(app.layer(RateLimitLayer::new(10, Duration::from_secs(1))).into_make_service())
         .await

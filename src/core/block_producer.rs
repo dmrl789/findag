@@ -8,6 +8,8 @@ use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
 use ed25519_dalek::{Keypair, Signature, Signer};
 use sha2::{Digest, Sha256};
 use bincode;
+use metrics;
+use tracing;
 
 /// Configuration for block production
 #[derive(Clone)]
@@ -52,19 +54,59 @@ impl<'a> BlockProducer<'a> {
 
     /// Generate a unique block with real content
     pub async fn produce_block(&mut self) -> Option<Block> {
+        let timer = metrics::BLOCK_LATENCY.start_timer();
+        
+        let result = match self.try_produce_block().await {
+            Ok(block) => Some(block),
+            Err(e) => {
+                tracing::error!(error = ?e, "Block production failed");
+                metrics::ERROR_COUNT.with_label_values(&["block_production"]).inc();
+                None
+            }
+        };
+        
+        timer.observe_duration();
+        result
+    }
+    
+    /// Compute block ID from block content
+    fn compute_block_id(&self, block: &Block) -> [u8; 32] {
+        let block_bytes = bincode::serialize(block).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&block_bytes);
+        let hash = hasher.finalize();
+        let mut block_id = [0u8; 32];
+        block_id.copy_from_slice(&hash);
+        block_id
+    }
+    
+    /// Sign the block
+    fn sign_block(&self, block: &Block) -> Signature {
+        self.keypair.sign(&block.block_id)
+    }
+    
+    /// Get current round
+    pub fn get_current_round(&self) -> u64 {
+        self.current_round
+    }
+    
+    /// Get transaction count
+    pub fn get_transaction_count(&self) -> usize {
+        self.transaction_count
+    }
+
+    async fn try_produce_block(&mut self) -> Result<Block, BlockProductionError> {
         let max_txs = self.config.max_txs_per_block;
         
-        // DEBUG: Log transaction sources
-        println!("[DEBUG] BlockProducer: Starting block production with max_txs={}", max_txs);
+        tracing::debug!(max_txs, "Starting block production");
         
-        // Get transactions from tx_pool (where HTTP API transactions are stored)
-        let transactions = self.tx_pool.get_transactions(max_txs, self.config.shard_id.0);
-        println!("[DEBUG] BlockProducer: Retrieved {} transactions from tx_pool", transactions.len());
+        let transactions = self.tx_pool
+            .get_transactions(max_txs, self.config.shard_id.0)
+            .ok_or(BlockProductionError::TxPoolEmpty)?;
         
-        // Early return if no transactions
         if transactions.is_empty() {
-            println!("[DEBUG] BlockProducer: No transactions available, skipping block production");
-            return None;
+            tracing::debug!("No transactions available");
+            return Err(BlockProductionError::NoTransactions);
         }
         
         // Update transaction count
@@ -103,33 +145,7 @@ impl<'a> BlockProducer<'a> {
         let block_signature = self.sign_block(&block);
         block.signature = block_signature;
         
-        println!("[DEBUG] BlockProducer: Successfully produced block with {} transactions", block.transactions.len());
-        Some(block)
-    }
-    
-    /// Compute block ID from block content
-    fn compute_block_id(&self, block: &Block) -> [u8; 32] {
-        let block_bytes = bincode::serialize(block).unwrap();
-        let mut hasher = Sha256::new();
-        hasher.update(&block_bytes);
-        let hash = hasher.finalize();
-        let mut block_id = [0u8; 32];
-        block_id.copy_from_slice(&hash);
-        block_id
-    }
-    
-    /// Sign the block
-    fn sign_block(&self, block: &Block) -> Signature {
-        self.keypair.sign(&block.block_id)
-    }
-    
-    /// Get current round
-    pub fn get_current_round(&self) -> u64 {
-        self.current_round
-    }
-    
-    /// Get transaction count
-    pub fn get_transaction_count(&self) -> usize {
-        self.transaction_count
+        tracing::debug!("Successfully produced block with {} transactions", block.transactions.len());
+        Ok(block)
     }
 } 

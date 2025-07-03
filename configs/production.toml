@@ -1,0 +1,28 @@
+[server]
+bind_addr = "0.0.0.0:443"
+http_timeout = 30
+
+[security]
+jwt_secret = "" # Will be auto-generated if empty
+tls_cert_path = "/etc/ssl/certs/findag.crt"
+tls_key_path = "/etc/ssl/private/findag.key"
+rate_limit = 1000
+
+[database]
+path = "/var/lib/findag/data"
+max_connections = 50
+
+[monitoring]
+metrics_port = 9898
+metrics_path = "/metrics"
+
+[network]
+bootstrap_peers = [
+    "dns4/bootstrap1.findag.io",
+    "dns4/bootstrap2.findag.io"
+]
+
+[logging]
+level = "info"
+format = "json"
+rotation = "daily" 

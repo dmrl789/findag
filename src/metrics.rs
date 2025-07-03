@@ -58,6 +58,20 @@ lazy_static! {
     ).unwrap();
     
     pub static ref MEMPOOL_SIZE: IntGauge = IntGauge::new("mempool_size", "Mempool size").unwrap();
+    
+    pub static ref API_LATENCY: Histogram = Histogram::with_opts(
+        HistogramOpts::new("api_latency_seconds", "API endpoint latency")
+            .buckets(vec![0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0])
+    ).unwrap();
+    
+    pub static ref MEMORY_USAGE: IntGauge = IntGauge::new("memory_usage_bytes", "Process memory usage").unwrap();
+    
+    pub static ref CONFIG_RELOADS: IntCounter = IntCounter::new("config_reloads_total", "Configuration reload count").unwrap();
+    
+    pub static ref TLS_HANDSHAKES: IntCounterVec = IntCounterVec::new(
+        prometheus::Opts::new("tls_handshakes_total", "TLS handshake count"), 
+        &["status"]
+    ).unwrap();
 }
 
 pub fn register_metrics() {
@@ -87,6 +101,10 @@ pub fn register_metrics() {
         REGISTRY.register(Box::new(IDENTITY_OP_FAILURE.clone())).ok();
         REGISTRY.register(Box::new(IDENTITY_OP_LATENCY.clone())).ok();
         REGISTRY.register(Box::new(MEMPOOL_SIZE.clone())).ok();
+        REGISTRY.register(Box::new(API_LATENCY.clone())).ok();
+        REGISTRY.register(Box::new(MEMORY_USAGE.clone())).ok();
+        REGISTRY.register(Box::new(CONFIG_RELOADS.clone())).ok();
+        REGISTRY.register(Box::new(TLS_HANDSHAKES.clone())).ok();
     });
 }
 
