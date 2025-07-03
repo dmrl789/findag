@@ -1,2 +1,12 @@
-*.pdb filter=lfs diff=lfs merge=lfs -text
-*.rlib filter=lfs diff=lfs merge=lfs -text
+ 
+# Ignore Makefiles from language stats
+Makefile linguist-documentation
+
+# Ignore shell scripts
+*.sh linguist-documentation
+*.ps1 linguist-documentation
+
+# Explicitly classify Rust and TypeScript as core
+*.rs linguist-language=Rust
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
