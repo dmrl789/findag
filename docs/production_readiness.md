@@ -396,4 +396,6 @@ With these improvements, FinDAG will be ready for production deployment in insti
 - Each produced block must include all available transactions from the mempool.
 - Blocks with zero transactions are a sign of a bug in the mempool draining or transaction submission logic.
 - Error responses from the node should be detailed and in JSON format for easier debugging.
-- The system must be able to handle high transaction throughput and maintain correct block inclusion. 
+- The system must be able to handle high transaction throughput and maintain correct block inclusion.
+
+- [ ] **Round interval configuration and monitoring**: Ensure `round_interval_ms` is set (e.g., 100–250 ms) and is being monitored in production for predictable, deterministic finality. 

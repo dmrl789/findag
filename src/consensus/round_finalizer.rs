@@ -1,11 +1,9 @@
 // round_finalizer.rs
 // FinDAG deterministic validator assignment and round finalization
 
-use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
-use crate::consensus::validator_set::{ValidatorSet, ValidatorStatus, Committee, CommitteeConfig};
-use rand::rngs::OsRng;
+use ed25519_dalek::{Keypair, PublicKey, Signer, Verifier};
+use crate::consensus::validator_set::{ValidatorSet, Committee, CommitteeConfig};
 use serde::{Serialize, Deserialize};
-use crate::core::address::generate_address;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
 use hex;
@@ -52,9 +50,9 @@ pub struct RoundFinalizer<'a> {
     keypair: Option<&'a Keypair>,
     local_address: Option<crate::core::address::Address>,
     current_round: u64,
-    round_timeout: Duration,
-    committee_size: usize,
-    finality_threshold: usize,
+    _round_timeout: Duration,
+    _committee_size: usize,
+    _finality_threshold: usize,
 }
 
 impl<'a> RoundFinalizer<'a> {
@@ -69,9 +67,9 @@ impl<'a> RoundFinalizer<'a> {
             keypair,
             local_address,
             current_round: 0,
-            round_timeout: Duration::from_secs(30),
-            committee_size: 20,
-            finality_threshold: 12,
+            _round_timeout: Duration::from_secs(30),
+            _committee_size: 20,
+            _finality_threshold: 12,
         }
     }
 
@@ -82,9 +80,9 @@ impl<'a> RoundFinalizer<'a> {
             keypair: None,
             local_address: None,
             current_round: 0,
-            round_timeout: Duration::from_secs(30),
-            committee_size: 20,
-            finality_threshold: 12,
+            _round_timeout: Duration::from_secs(30),
+            _committee_size: 20,
+            _finality_threshold: 12,
         }
     }
 
@@ -236,10 +234,9 @@ impl<'a> RoundFinalizer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::Signer;
-    use rand::rngs::OsRng;
+    use crate::core::address::generate_address;
 
-    fn create_validator(name: &str) -> (crate::core::address::Address, Keypair) {
+    fn _create_validator(_name: &str) -> (crate::core::address::Address, Keypair) {
         let (keypair, address) = generate_address();
         (address, keypair)
     }
@@ -261,8 +258,8 @@ mod tests {
     fn test_committee_selection() {
         let mut validator_set = ValidatorSet::new();
         
-        // Add some test validators
-        for i in 0..10 {
+        // Add enough test validators (at least 20 for default committee size)
+        for i in 0..25 {
             let (keypair, address) = generate_address();
             validator_set.add_validator_with_metadata(
                 address,
@@ -298,7 +295,7 @@ mod tests {
             );
         }
 
-        let mut finalizer = RoundFinalizer::dummy(&mut validator_set);
+        let finalizer = RoundFinalizer::dummy(&mut validator_set);
         
         // Test finality detection
         let is_finalized = finalizer.is_quorum_achieved();

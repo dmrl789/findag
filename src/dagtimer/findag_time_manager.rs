@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_HISTORY: usize = 100;
 const MAX_ALLOWED_SKEW_US: i64 = 5000; // Clamp time correction to ±5ms
+#[allow(dead_code)]
 const NANO_PER_MICRO: u64 = 1_000;
 
 #[derive(Debug, Clone)]

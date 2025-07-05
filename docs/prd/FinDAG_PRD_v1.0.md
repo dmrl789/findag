@@ -672,4 +672,58 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
   - Report bugs or vulnerabilities responsibly.
 
 - **Support & Community:**
-  - For help, open an issue or join the project chat/discussion board. 
+  - For help, open an issue or join the project chat/discussion board.
+
+## Deterministic High-Frequency Rounds
+
+FinDAG's consensus uses a **RoundChain** with strictly sequential, non-overlapping Rounds. Each Round runs on a precise, configurable interval (e.g., every 100–250 ms), finalizing all blocks produced since the previous Round.
+
+### How it Works
+- **BlockDAG**: Runs continuously, producing blocks as transactions arrive (e.g., every 10–50 ms).
+- **RoundChain**: On a deterministic schedule, collects and finalizes all new blocks since the last Round.
+- **No Overlap**: Each Round finalizes up to a cutoff point; the next starts where the previous left off.
+
+### Operational Flow
+1. Continuously collect blocks.
+2. When `round_interval_ms` passes, gather all new blocks.
+3. Run validator voting/quorum signatures.
+4. Produce a Round Certificate.
+5. Start the next Round.
+
+### Example Config
+```toml
+# findag_config.toml
+round_interval_ms = 200  # Each Round starts every 200 ms
+block_production_interval_ms = 10  # Blocks produced every 10–50 ms
+```
+
+### Rust Scheduler Example
+```rust
+loop {
+    // 1. Collect new blocks
+    let new_blocks = dag.collect_new_blocks();
+    // 2. If round interval elapsed, finalize
+    if round_timer.elapsed() >= round_interval_ms {
+        roundchain.create_and_finalize_round(new_blocks);
+        round_timer.reset();
+    }
+    sleep(block_production_interval_ms);
+}
+```
+
+### Recommended Parameters
+| Parameter       | Example Value     |
+| --------------- | ----------------- |
+| Block frequency | 10–50 ms          |
+| Round frequency | 100–250 ms        |
+| Round type      | Simple chain      |
+| Finality type   | Quorum signatures |
+| Auditability    | Deterministic     |
+
+### Benefits
+- ⏱️ Predictable latency
+- 📊 Measurable throughput
+- 🔍 Deterministic audit trail
+- ⚡ Fast block inclusion
+
+**Note:** Rounds are strictly sequential; no parallel or overlapping finality paths. 

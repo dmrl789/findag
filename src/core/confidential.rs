@@ -7,6 +7,9 @@
 //
 // TODO: Implement confidential transaction logic, proof generation/verification, and integration with the main transaction flow.
 
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ConfidentialTx {
     pub commitment: Vec<u8>, // Pedersen commitment
     pub range_proof: Vec<u8>, // Range proof

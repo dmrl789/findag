@@ -1,12 +1,9 @@
 use std::collections::HashMap;
 use serde_json::Value;
-use findag::core::types::{Transaction, ShardId};
-use findag::core::address::Address;
-use ed25519_dalek::{PublicKey, Signature, Verifier};
+
 
 #[derive(Debug)]
 struct TransactionAnalysis {
-    raw_json: String,
     parsed_fields: HashMap<String, String>,
     validation_errors: Vec<String>,
     signature_analysis: SignatureAnalysis,
@@ -16,7 +13,6 @@ struct TransactionAnalysis {
 struct SignatureAnalysis {
     signature_length: usize,
     public_key_length: usize,
-    signature_valid: bool,
     signature_bytes: Vec<u8>,
     public_key_bytes: Vec<u8>,
 }
@@ -44,13 +40,11 @@ fn main() {
 
 fn analyze_transaction(raw_json: &str) -> TransactionAnalysis {
     let mut analysis = TransactionAnalysis {
-        raw_json: raw_json.to_string(),
         parsed_fields: HashMap::new(),
         validation_errors: Vec::new(),
         signature_analysis: SignatureAnalysis {
             signature_length: 0,
             public_key_length: 0,
-            signature_valid: false,
             signature_bytes: Vec::new(),
             public_key_bytes: Vec::new(),
         },

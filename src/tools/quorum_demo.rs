@@ -1,14 +1,13 @@
 // quorum_demo.rs
 // Demonstration tool for FinDAG's quorum rotation system
 
-use crate::consensus::validator_set::{ValidatorSet, CommitteeConfig, ValidatorReputation};
+use crate::consensus::validator_set::ValidatorSet;
 use crate::core::address::generate_address;
 use ed25519_dalek::Keypair;
-use std::collections::HashMap;
 
 pub struct QuorumDemo {
     validator_set: ValidatorSet,
-    demo_validators: Vec<(Keypair, crate::core::address::Address)>,
+    _demo_validators: Vec<(Keypair, crate::core::address::Address)>,
 }
 
 impl QuorumDemo {
@@ -39,7 +38,7 @@ impl QuorumDemo {
 
         Self {
             validator_set,
-            demo_validators,
+            _demo_validators: demo_validators,
         }
     }
 

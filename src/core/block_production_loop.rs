@@ -2,7 +2,7 @@ use crate::core::{
     block_producer::{BlockProducer, BlockProducerConfig},
     dag_engine::DagEngine,
     tx_pool::ShardedTxPool,
-    types::{Block, ShardId},
+    types::ShardId,
 };
 use crate::core::address::Address;
 use crate::consensus::round_finalizer::RoundFinalizer;

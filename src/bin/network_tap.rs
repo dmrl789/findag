@@ -14,7 +14,7 @@ fn main() {
     
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
+            Ok(stream) => {
                 thread::spawn(move || {
                     handle_connection(stream);
                 });

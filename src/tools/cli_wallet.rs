@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signer, SECRET_KEY_LENGTH, PUBLIC_KEY_LENGTH};
-use rand::rngs::OsRng;
+use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signer, SECRET_KEY_LENGTH};
 use std::fs;
 use std::path::PathBuf;
 use std::io::{self, Write};
@@ -66,6 +65,7 @@ struct ApiTransaction {
     public_key: String,
 }
 
+#[allow(dead_code)]
 async fn fetch_asset_whitelist(node_url: &str) -> Vec<String> {
     let url = format!("{}/assets", node_url);
     match reqwest::get(&url).await {
@@ -78,6 +78,7 @@ async fn fetch_asset_whitelist(node_url: &str) -> Vec<String> {
 }
 
 #[tokio::main]
+#[allow(dead_code)]
 async fn main() {
     let cli = Cli::parse();
     match &cli.command {
@@ -152,6 +153,7 @@ async fn main() {
     }
 }
 
+#[allow(dead_code)]
 fn load_keypair(file: &PathBuf) -> Keypair {
     let sk_hex = fs::read_to_string(file).expect("Failed to read key file");
     let sk_bytes = hex::decode(sk_hex.trim()).expect("Invalid hex in key file");

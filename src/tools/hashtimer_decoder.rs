@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use sha2::{Sha256, Digest};
 
 /// Decodes a HashTimer and extracts its components
@@ -50,11 +49,12 @@ pub fn validate_hashtimer(hashtimer_hex: &str, expected_content: &[u8]) -> bool 
         hasher.update(expected_content);
         let computed_hash = hasher.finalize();
         
-        // Convert computed hash to hex and compare with suffix
+        // Convert computed hash to hex and compare only the first 50 hex chars
         let computed_hex = format!("{:x}", computed_hash);
+        let computed_prefix = &computed_hex[..50];
         
-        // The hash suffix should match the computed hash
-        computed_hex == hash_suffix
+        // The hash suffix should match the computed hash prefix
+        computed_prefix == hash_suffix
     } else {
         false
     }
@@ -143,7 +143,12 @@ mod tests {
         // Create a HashTimer with time prefix + hash
         let time_prefix = "1234567890abcd"; // 14 hex chars
         let hash_suffix = format!("{:x}", hash);
+        // Truncate hash to fit exactly 64 characters total
+        let hash_suffix = &hash_suffix[..50]; // 50 hex chars to make total 64
         let hashtimer = format!("{}{}", time_prefix, hash_suffix);
+        
+        // Ensure the hashtimer is exactly 64 hex characters
+        assert_eq!(hashtimer.len(), 64);
         
         assert!(validate_hashtimer(&hashtimer, content));
         assert!(!validate_hashtimer(&hashtimer, b"wrong content"));

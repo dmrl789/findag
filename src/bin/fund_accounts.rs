@@ -2,9 +2,7 @@ use clap::Parser;
 use ed25519_dalek::{Keypair, Signer};
 use reqwest::Client;
 use serde_json::json;
-use sha2::{Digest, Sha256};
-use std::env;
-use rand::SeedableRng;
+
 use hex;
 
 #[derive(Parser)]

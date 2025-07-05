@@ -2,10 +2,8 @@ use clap::{Parser, Subcommand, Args};
 use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::PathBuf;
-use std::io::{self, Write};
+
 use findag::core::wallet::{Wallet, WalletManager, prompt_password, prompt_password_confirm};
-use std::fs::File;
-use std::io::Read;
 
 #[derive(Parser)]
 #[command(name = "findag-wallet")]

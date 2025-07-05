@@ -28,5 +28,17 @@ Open a GitHub issue or email support@your-org.com.
 **Where can I find the feedback form?**
 [docs/pilot_feedback_form.md]
 
+### Q: Why does FinDAG use strict, high-frequency Round intervals?
+
+**A:**
+- To ensure predictable, low-latency finality for every transaction.
+- To make throughput and auditability easy to measure and verify.
+- To keep the network efficient: blocks are finalized frequently, so no need to wait for large batches.
+- To guarantee that Rounds are strictly sequential, with no overlap—making the system easy to reason about and audit.
+
+**Typical config:**
+- `round_interval_ms = 100..250` (Rounds every 100–250 ms)
+- `block_production_interval_ms = 10..50` (Blocks every 10–50 ms)
+
 ---
 For more, see the full documentation or contact the team! 

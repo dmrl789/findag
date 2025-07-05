@@ -52,7 +52,7 @@ async fn main() {
         let payload = format!("transfer:{}:{}:USD", from, to).into_bytes();
         
         // Create transaction
-        let tx = Transaction {
+        let _tx = Transaction {
             from: Address(from.to_string()),
             to: Address(to.to_string()),
             amount,

@@ -1,41 +1,26 @@
 use std::sync::Arc;
 use axum::{
-    routing::{get, post},
     http::StatusCode,
-    Json, Router,
+    Json,
     extract::State,
     debug_handler,
 };
-use tokio::net::TcpListener;
-use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::Mutex;
-use ed25519_dalek::{Keypair, Signer, Verifier};
-use std::net::SocketAddr;
-use tower_http::cors::{CorsLayer, Any};
+use ed25519_dalek::Verifier;
 use serde::{Serialize, Deserialize};
-use rand::Rng;
-use hex;
-use base64::Engine;
 use clap::Parser;
 
 use findag::core::dag_engine::DagEngine;
 use findag::core::tx_pool::ShardedTxPool;
-use findag::core::address::{Address, generate_address};
-use findag::core::types::{Transaction, Block, SerializableTransaction, SerializableBlock, ShardId};
+use findag::core::address::Address;
+use findag::core::types::{Transaction, Block, ShardId};
 use findag::dagtimer::findag_time_manager::FinDAGTimeManager;
 use findag::dagtimer::hashtimer::compute_hashtimer;
-use findag::core::block_production_loop::{run_block_production_loop, BlockProductionConfig};
-use findag::network::propagation::{NetworkPropagator, GossipMsg};
-use findag::consensus::round_finalizer::RoundFinalizer;
+use findag::network::propagation::NetworkPropagator;
+use findag::network::consensus_integration::ConsensusIntegration;
+use findag::network::encryption::P2PEncryption;
 use findag::consensus::validator_set::ValidatorSet;
-use findag::consensus::mempool::Mempool;
 use serde_json::json;
-use findag::tools::run_quorum_demo;
-use findag::tools::run_handle_wallet;
-use std::env;
-
-use findag::api::http_server;
-use findag::network::p2p;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -57,6 +42,7 @@ struct Args {
 struct AppState {
     tx_pool: Arc<ShardedTxPool>,
     dag: Arc<Mutex<DagEngine>>,
+    #[allow(dead_code)]
     propagator: Arc<NetworkPropagator>,
     address: Address,
     time_manager: Arc<FinDAGTimeManager>,
@@ -85,6 +71,7 @@ struct TransactionRequest {
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let dag_stats = state.dag.lock().await.get_stats().await;
     let tx_pool_size = state.tx_pool.size(0); // shard 0
@@ -100,6 +87,7 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
+#[allow(dead_code)]
 async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     let dag = state.dag.lock().await;
     let block_count = dag.block_count().await as u64;
@@ -112,6 +100,7 @@ async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn submit_transaction(State(state): State<AppState>, Json(req): Json<TransactionRequest>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     println!("[DEBUG] HTTP API: Received transaction request: {:?}", req);
     
@@ -199,6 +188,7 @@ async fn submit_transaction(State(state): State<AppState>, Json(req): Json<Trans
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn get_blocks(State(state): State<AppState>) -> Json<Vec<Block>> {
     let dag = state.dag.lock().await;
     let blocks = dag.get_all_blocks().await;
@@ -206,6 +196,7 @@ async fn get_blocks(State(state): State<AppState>) -> Json<Vec<Block>> {
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn get_dag(State(state): State<AppState>) -> Json<serde_json::Value> {
     let dag = state.dag.lock().await;
     let stats = dag.get_stats().await;
@@ -213,6 +204,7 @@ async fn get_dag(State(state): State<AppState>) -> Json<serde_json::Value> {
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn get_hashtimer_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     let current_time = state.time_manager.get_findag_time();
     let round_duration_ns = 16_000_000_000u64; // 16 seconds in nanoseconds
@@ -227,6 +219,7 @@ async fn get_hashtimer_status(State(state): State<AppState>) -> Json<serde_json:
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn get_mempool_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     let tx_pool_size = state.tx_pool.size(0);
     Json(json!({
@@ -237,6 +230,7 @@ async fn get_mempool_status(State(state): State<AppState>) -> Json<serde_json::V
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn get_mempool_transactions(State(state): State<AppState>) -> Json<serde_json::Value> {
     let transactions = state.tx_pool.get_transactions(1000, 0); // Get up to 1000 transactions from shard 0
     let tx_data: Vec<serde_json::Value> = transactions.iter().map(|tx| {
@@ -257,6 +251,7 @@ async fn get_mempool_transactions(State(state): State<AppState>) -> Json<serde_j
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn get_recent_transactions(State(state): State<AppState>) -> Json<serde_json::Value> {
     let dag = state.dag.lock().await;
     let blocks = dag.get_all_blocks().await;
@@ -286,6 +281,7 @@ async fn get_recent_transactions(State(state): State<AppState>) -> Json<serde_js
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn get_simple_transactions(State(state): State<AppState>) -> Json<serde_json::Value> {
     // Get tx_pool transactions
     let transactions = state.tx_pool.get_transactions(1000, 0); // Get up to 1000 transactions from shard 0
@@ -311,6 +307,7 @@ async fn get_simple_transactions(State(state): State<AppState>) -> Json<serde_js
 }
 
 #[debug_handler]
+#[allow(dead_code)]
 async fn get_transaction_summary(State(state): State<AppState>) -> Json<serde_json::Value> {
     let tx_pool_size = state.tx_pool.size(0);
     
@@ -350,6 +347,41 @@ async fn main() {
         &args.data_dir
     ));
 
+    // Initialize DAG engine
+    let dag = Arc::new(Mutex::new(DagEngine::new().await));
+    
+    // Initialize validator set
+    let validator_set = Arc::new(Mutex::new(ValidatorSet::new()));
+    
+    // Initialize time manager
+    let _time_manager = Arc::new(FinDAGTimeManager::new());
+    
+    // Generate local node address and keypair
+    let (local_keypair, local_address) = findag::core::address::generate_address();
+    
+    // Initialize encryption layer
+    let encryption = Arc::new(P2PEncryption::new_from_ed25519(&local_keypair));
+    
+    // Initialize network propagator with encryption
+    let peers = vec![]; // TODO: Load from configuration
+    let mut propagator = NetworkPropagator::new("0.0.0.0:9000", peers, local_address.clone()).await
+        .expect("Failed to create network propagator");
+    propagator.enable_encryption(encryption.clone());
+    let propagator = Arc::new(propagator);
+    
+    // Initialize consensus integration
+    let consensus_integration = ConsensusIntegration::new(
+        propagator.clone(),
+        validator_set.clone(),
+        dag.clone(),
+        tx_pool.clone(),
+        local_address.clone(),
+        Some(local_keypair),
+    );
+    
+    // Start consensus integration
+    consensus_integration.start().await;
+
     // Start HTTP server
     if let Err(e) = findag::api::http_server::start(args.port, tx_pool.clone()).await {
         eprintln!("Failed to start HTTP server: {}", e);
@@ -360,5 +392,15 @@ async fn main() {
     if let Err(e) = findag::network::p2p::start(args.p2p_port, tx_pool).await {
         eprintln!("Failed to start P2P network: {}", e);
         return;
+    }
+    
+    println!("✅ FinDAG node started successfully!");
+    println!("🔗 Local address: {}", local_address.as_str());
+    println!("🌐 P2P port: {}", args.p2p_port);
+    println!("📡 HTTP port: {}", args.port);
+    
+    // Keep the main thread alive
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
     }
 } 

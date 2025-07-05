@@ -2,12 +2,10 @@ use clap::{Parser, Subcommand};
 use reqwest;
 use std::time::Duration;
 use tokio::time::sleep;
-use ed25519_dalek::{Keypair, Signature, Signer};
+use ed25519_dalek::{Keypair, Signer};
 use findag::core::types::Transaction;
 use findag::core::address::Address;
 use reqwest::Client;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
 use serde_json::json;
 use hex;
 
@@ -87,7 +85,7 @@ impl TransactionBot {
         
         println!("[Bot-01] Sending transaction: from={}, to={}, amount={}", from, to, amount);
         
-        let tx = Transaction {
+        let _tx = Transaction {
             from: from.clone(),
             to: to.clone(),
             amount,

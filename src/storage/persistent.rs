@@ -31,7 +31,7 @@ impl PersistentStorage {
     }
 
     pub fn save_round(&self, round: &Round) {
-        let key = [b"round:".as_ref(), &round.round_id.to_be_bytes()].concat();
+        let key = [b"round:".as_ref(), &round.round_number.to_be_bytes()].concat();
         let serializable = SerializableRound::from(round.clone());
         let value = bincode::serialize(&serializable).unwrap();
         self.db.insert(key, value).unwrap();

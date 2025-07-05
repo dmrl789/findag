@@ -10,7 +10,7 @@ use aes_gcm::aead::Aead;
 use rand::Rng;
 use hex;
 use chrono::{DateTime, Utc};
-use std::str::FromStr;
+// Removed unused import: FromStr
 
 /// Encrypted wallet data structure
 #[derive(Serialize, Deserialize, Debug)]

@@ -163,43 +163,48 @@ impl TryFrom<SerializableBlock> for Block {
     }
 }
 
-/// Represents a round checkpoint in the FinDAG DAG
+/// Represents a simple, linear Round in the FinDAG RoundChain
+/// This Round implementation uses a simple linear chain.
+/// No Round DAG logic — finality is strict, ordered, and single-parent.
 #[derive(Debug, Clone)]
 pub struct Round {
-    pub round_id: u64,                // Monotonically increasing round number
-    pub parent_rounds: Vec<u64>,      // Parent round ids (DAG links)
-    pub block_ids: Vec<[u8; 32]>,     // Blocks included in this round
-    pub findag_time: u64,             // FinDAG Time
-    pub hashtimer: [u8; 32],          // HashTimer
-    pub proposer: Address,            // Round proposer address
-    pub signature: Signature,         // Ed25519 signature
-    pub public_key: PublicKey,        // For signature verification
+    pub round_number: u64,                    // Monotonically increasing round number
+    pub parent_round_hash: [u8; 32],          // Hash of the immediately previous Round only
+    pub finalized_block_hashes: Vec<[u8; 32]>, // List of finalized block hashes
+    pub block_hashtimers: Vec<[u8; 32]>,      // HashTimers for each finalized block
+    pub quorum_signature: Vec<u8>,             // Threshold signature from validators
+    pub findag_time: u64,                     // FinDAG Time for deterministic ordering
+    pub proposer: Address,                    // Round proposer address
+    pub proposer_signature: Signature,        // Proposer's signature
+    pub proposer_public_key: PublicKey,       // Proposer's public key
 }
 
 /// Serializable version of Round for network transmission
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableRound {
-    pub round_id: u64,
-    pub parent_rounds: Vec<u64>,
-    pub block_ids: Vec<[u8; 32]>,
+    pub round_number: u64,
+    pub parent_round_hash: [u8; 32],
+    pub finalized_block_hashes: Vec<[u8; 32]>,
+    pub block_hashtimers: Vec<[u8; 32]>,
+    pub quorum_signature: Vec<u8>,
     pub findag_time: u64,
-    pub hashtimer: [u8; 32],
     pub proposer: Address,
-    pub signature_bytes: Vec<u8>,
-    pub public_key_bytes: Vec<u8>,
+    pub proposer_signature_bytes: Vec<u8>,
+    pub proposer_public_key_bytes: Vec<u8>,
 }
 
 impl From<Round> for SerializableRound {
     fn from(round: Round) -> Self {
         Self {
-            round_id: round.round_id,
-            parent_rounds: round.parent_rounds,
-            block_ids: round.block_ids,
+            round_number: round.round_number,
+            parent_round_hash: round.parent_round_hash,
+            finalized_block_hashes: round.finalized_block_hashes,
+            block_hashtimers: round.block_hashtimers,
+            quorum_signature: round.quorum_signature,
             findag_time: round.findag_time,
-            hashtimer: round.hashtimer,
             proposer: round.proposer,
-            signature_bytes: round.signature.to_bytes().to_vec(),
-            public_key_bytes: round.public_key.to_bytes().to_vec(),
+            proposer_signature_bytes: round.proposer_signature.to_bytes().to_vec(),
+            proposer_public_key_bytes: round.proposer_public_key.to_bytes().to_vec(),
         }
     }
 }
@@ -208,18 +213,19 @@ impl TryFrom<SerializableRound> for Round {
     type Error = Box<dyn std::error::Error>;
     
     fn try_from(sround: SerializableRound) -> Result<Self, Self::Error> {
-        let signature = Signature::from_bytes(&sround.signature_bytes)?;
-        let public_key = PublicKey::from_bytes(&sround.public_key_bytes)?;
+        let proposer_signature = Signature::from_bytes(&sround.proposer_signature_bytes)?;
+        let proposer_public_key = PublicKey::from_bytes(&sround.proposer_public_key_bytes)?;
         
         Ok(Self {
-            round_id: sround.round_id,
-            parent_rounds: sround.parent_rounds,
-            block_ids: sround.block_ids,
+            round_number: sround.round_number,
+            parent_round_hash: sround.parent_round_hash,
+            finalized_block_hashes: sround.finalized_block_hashes,
+            block_hashtimers: sround.block_hashtimers,
+            quorum_signature: sround.quorum_signature,
             findag_time: sround.findag_time,
-            hashtimer: sround.hashtimer,
             proposer: sround.proposer,
-            signature,
-            public_key,
+            proposer_signature,
+            proposer_public_key,
         })
     }
 }
@@ -265,6 +271,7 @@ impl Block {
 }
 
 impl Transaction {
+    #[allow(dead_code)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Transaction {{ from: {}, to: {}, amount: {}, hashtimer: {} }}", 
             self.from.as_str(), 
