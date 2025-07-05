@@ -1,9 +1,9 @@
 use chrono::Utc;
 use ed25519_dalek::{Keypair, Signer, PublicKey};
-use serde_json::json;
 use std::fs;
-use std::path::Path;
 use clap::{Parser, Subcommand};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use crate::core::handle_registry::{
     RegisterSubhandleInstruction, 
     RotateKeyInstruction, 
@@ -123,12 +123,12 @@ fn register_subhandle_cli(
         // Try base64
         let pubkey_str = String::from_utf8(new_pubkey_bytes)
             .expect("Invalid pubkey file encoding");
-        let decoded = base64::decode(pubkey_str.trim())
+        let decoded = STANDARD.decode(pubkey_str.trim())
             .expect("Invalid base64 pubkey");
         PublicKey::from_bytes(&decoded)
             .expect("Invalid pubkey bytes")
     };
-    let new_pubkey_b64 = base64::encode(new_pubkey.to_bytes());
+    let new_pubkey_b64 = STANDARD.encode(new_pubkey.to_bytes());
 
     // 3. Compose handle
     let handle = if parent_handle.starts_with('@') {
@@ -158,7 +158,7 @@ fn register_subhandle_cli(
     // 7. Sign payload
     let payload = HandleRegistry::subhandle_payload_to_sign(&instr);
     let sig = parent_keypair.sign(payload.as_bytes());
-    instr.parent_signature = base64::encode(sig.to_bytes());
+    instr.parent_signature = STANDARD.encode(sig.to_bytes());
 
     // 8. Output JSON
     let json = serde_json::to_string_pretty(&instr).unwrap();
@@ -185,12 +185,12 @@ fn rotate_key_cli(
     } else {
         let pubkey_str = String::from_utf8(new_pubkey_bytes)
             .expect("Invalid pubkey file encoding");
-        let decoded = base64::decode(pubkey_str.trim())
+        let decoded = STANDARD.decode(pubkey_str.trim())
             .expect("Invalid base64 pubkey");
         PublicKey::from_bytes(&decoded)
             .expect("Invalid pubkey bytes")
     };
-    let new_pubkey_b64 = base64::encode(new_pubkey.to_bytes());
+    let new_pubkey_b64 = STANDARD.encode(new_pubkey.to_bytes());
 
     // 3. Timestamp
     let timestamp = Utc::now().to_rfc3339();
@@ -206,7 +206,7 @@ fn rotate_key_cli(
     // 5. Sign payload
     let payload = HandleRegistry::rotate_key_payload_to_sign(&instr);
     let sig = current_keypair.sign(payload.as_bytes());
-    instr.signature = base64::encode(sig.to_bytes());
+    instr.signature = STANDARD.encode(sig.to_bytes());
 
     // 6. Output JSON
     let json = serde_json::to_string_pretty(&instr).unwrap();
@@ -238,7 +238,7 @@ fn revoke_handle_cli(
     // 4. Sign payload
     let payload = HandleRegistry::revoke_handle_payload_to_sign(&instr);
     let sig = parent_keypair.sign(payload.as_bytes());
-    instr.parent_signature = base64::encode(sig.to_bytes());
+    instr.parent_signature = STANDARD.encode(sig.to_bytes());
 
     // 5. Output JSON
     let json = serde_json::to_string_pretty(&instr).unwrap();
@@ -281,7 +281,7 @@ pub fn generate_keypair(output_path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to write keypair: {}", e))?;
     
     println!("Generated new keypair: {}", output_path);
-    println!("Public key (base64): {}", base64::encode(keypair.public.to_bytes()));
+    println!("Public key (base64): {}", STANDARD.encode(keypair.public.to_bytes()));
     println!("Public key (hex): {}", hex::encode(keypair.public.to_bytes()));
     
     Ok(())

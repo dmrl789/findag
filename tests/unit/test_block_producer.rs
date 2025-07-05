@@ -9,14 +9,14 @@ use ed25519_dalek::Keypair;
 use std::sync::Arc;
 
 proptest! {
-    #[test]
-    fn block_producer_only_includes_valid_transactions(
+    #[tokio::test]
+    async fn block_producer_only_includes_valid_transactions(
         amount in 1u64..1_000_000,
         asset in prop_oneof![Just("USD"), Just("EUR"), Just("BTC")],
     ) {
         let state_db = Arc::new(StateDB::default());
-        let mut dag = DagEngine::new();
-        let tx_pool = ShardedTxPool::new(100);
+        let mut dag = DagEngine::new().await;
+        let _tx_pool = ShardedTxPool::new(100);
         let (keypair, address) = generate_address();
         let bal = state_db.get_balance(0, address.as_str(), asset);
         state_db.set_balance(address.as_str(), asset, 1_000_000);
@@ -31,11 +31,11 @@ proptest! {
             // ... fill in other fields as needed ...
             ..Default::default()
         };
-        tx_pool.add_transaction(tx.clone());
+        _tx_pool.add_transaction(tx.clone());
 
         let mut producer = BlockProducer {
             dag: &mut dag,
-            tx_pool: &tx_pool,
+            tx_pool: &_tx_pool,
             proposer: address.clone(),
             keypair: &keypair,
             max_block_txs: 10,

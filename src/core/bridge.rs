@@ -7,14 +7,12 @@
 //
 // TODO: Implement bridge logic, proof formats, relayer integration, and security checks.
 
-use crate::core::types::{Block, Transaction, ShardId};
-use crate::storage::state::StateManager;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use serde::{Serialize, Deserialize};
-use chrono::Utc;
 use sha2::{Sha256, Digest};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeTx {
     pub id: String,
     pub from_chain: String,

@@ -8,7 +8,6 @@ use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
 use ed25519_dalek::{Keypair, Signature, Signer};
 use sha2::{Digest, Sha256};
 use bincode;
-use metrics;
 use tracing;
 
 /// Configuration for block production
@@ -17,6 +16,13 @@ pub struct BlockProducerConfig {
     pub max_txs_per_block: usize,
     pub target_block_time_ms: u64,
     pub shard_id: ShardId,
+}
+
+#[derive(Debug)]
+pub enum BlockProductionError {
+    TxPoolEmpty,
+    NoTransactions,
+    InvalidBlock,
 }
 
 /// Block production logic for FinDAG
@@ -54,18 +60,21 @@ impl<'a> BlockProducer<'a> {
 
     /// Generate a unique block with real content
     pub async fn produce_block(&mut self) -> Option<Block> {
-        let timer = metrics::BLOCK_LATENCY.start_timer();
+        // Removed metrics::BLOCK_LATENCY - not defined
+        // TODO: Implement metrics
         
         let result = match self.try_produce_block().await {
             Ok(block) => Some(block),
             Err(e) => {
                 tracing::error!(error = ?e, "Block production failed");
-                metrics::ERROR_COUNT.with_label_values(&["block_production"]).inc();
+                // Removed metrics::ERROR_COUNT - not defined
+                // TODO: Implement metrics
                 None
             }
         };
         
-        timer.observe_duration();
+        // Removed timer - not defined
+        // TODO: Implement metrics
         result
     }
     
@@ -101,8 +110,10 @@ impl<'a> BlockProducer<'a> {
         tracing::debug!(max_txs, "Starting block production");
         
         let transactions = self.tx_pool
-            .get_transactions(max_txs, self.config.shard_id.0)
-            .ok_or(BlockProductionError::TxPoolEmpty)?;
+            .get_transactions(max_txs, self.config.shard_id.0);
+        if transactions.is_empty() {
+            return Err(BlockProductionError::TxPoolEmpty);
+        }
         
         if transactions.is_empty() {
             tracing::debug!("No transactions available");

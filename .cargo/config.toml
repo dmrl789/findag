@@ -1,0 +1,44 @@
+[build]
+# Enable incremental compilation for faster builds
+incremental = true
+
+[test]
+# Enable test threading
+harness = true
+
+[profile.dev]
+# Optimize debug builds for faster testing
+opt-level = 1
+debug = true
+
+[profile.test]
+# Optimize test builds
+opt-level = 1
+debug = true
+
+[profile.bench]
+# Optimize benchmark builds
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+
+[profile.release]
+# Production optimizations
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[target.x86_64-unknown-linux-gnu]
+# Linux-specific optimizations
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-pc-windows-msvc]
+# Windows-specific optimizations
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-apple-darwin]
+# macOS-specific optimizations
+rustflags = ["-C", "target-cpu=native"] 

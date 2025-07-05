@@ -1,15 +1,16 @@
 use crate::core::dag_engine::DagEngine;
-use crate::core::types::{Round};
+use crate::core::types::Round;
 use crate::core::address::Address;
 use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
-use crate::dagtimer::hashtimer::compute_hashtimer;
-use ed25519_dalek::{Keypair, Signer};
+use ed25519_dalek::Keypair;
 use tokio::time::{sleep, Duration};
 use std::collections::HashSet;
 use crate::storage::persistent::PersistMsg;
 use tokio::sync::mpsc::UnboundedSender;
+use crate::consensus::roundchain::RoundChain;
 
 /// Runs the round checkpointing loop at the given interval (ms)
+/// Uses simple linear RoundChain for deterministic finality
 pub async fn run_round_checkpoint_loop(
     dag: &mut DagEngine,
     proposer: Address,
@@ -17,52 +18,63 @@ pub async fn run_round_checkpoint_loop(
     interval_ms: u64,
     time_manager: &FinDAGTimeManager,
     persist_tx: UnboundedSender<PersistMsg>,
+    roundchain: &mut RoundChain,
 ) {
-    let mut last_round_id = 0u64;
+    let mut last_round_number = 0u64;
     let mut last_block_set: HashSet<[u8; 32]> = HashSet::new();
+    
     loop {
         // Collect all new blocks since last round
         let all_blocks: Vec<_> = dag.get_all_blocks().await;
-        let mut new_block_ids = Vec::new();
+        let mut new_blocks = Vec::new();
         for block in &all_blocks {
             if !last_block_set.contains(&block.block_id) {
-                new_block_ids.push(block.block_id);
+                new_blocks.push(block.clone());
             }
         }
-        if !new_block_ids.is_empty() {
-            // Prepare round data
-            let round_id = last_round_id + 1;
-            let parent_rounds = if last_round_id > 0 { vec![last_round_id] } else { vec![] };
+        
+        if !new_blocks.is_empty() {
+            // Create new round with finalized blocks
+            let round_number = last_round_number + 1;
             let findag_time = time_manager.get_findag_time();
-            // HashTimer for the round (using FinDAG Time, block ids, and a nonce)
-            let mut round_content = Vec::new();
-            for block_id in &new_block_ids {
-                round_content.extend_from_slice(block_id);
-            }
-            let nonce = 0u32; // You may want to increment or randomize this
-            let hashtimer = compute_hashtimer(findag_time, &round_content, nonce);
-            // Sign the round (simplified: sign round_id)
-            let mut round_id_bytes = [0u8; 8];
-            round_id_bytes.copy_from_slice(&round_id.to_be_bytes());
-            let signature = keypair.sign(&round_id_bytes);
-            let public_key = keypair.public;
-            let round = Round {
-                round_id,
-                parent_rounds,
-                block_ids: new_block_ids.clone(),
+            
+            // Create the round using RoundChain
+            let round = roundchain.create_round(
+                round_number,
+                new_blocks.clone(),
                 findag_time,
-                hashtimer,
-                proposer: proposer.clone(),
-                signature,
-                public_key,
+                keypair,
+                proposer.clone(),
+            ).expect("Failed to create round");
+            
+            // Add round to RoundChain
+            roundchain.add_round(round.clone()).expect("Failed to add round to chain");
+            
+            // Convert RoundChain Round to core Round for compatibility
+            let core_round = Round {
+                round_number: round.round_number,
+                parent_round_hash: round.parent_round_hash,
+                finalized_block_hashes: round.finalized_block_hashes,
+                block_hashtimers: round.block_hashtimers,
+                quorum_signature: round.quorum_signature,
+                findag_time: round.findag_time,
+                proposer: round.proposer,
+                proposer_signature: round.proposer_signature,
+                proposer_public_key: round.proposer_public_key,
             };
-            dag.add_round(round.clone());
-            last_round_id = round_id;
-            last_block_set.extend(new_block_ids);
-            println!("Created round checkpoint: {} with {} blocks", round_id, last_block_set.len());
+            dag.add_round(core_round.clone()).await;
+            
+            last_round_number = round_number;
+            for block in &new_blocks {
+                last_block_set.insert(block.block_id);
+            }
+            
+            println!("Created round checkpoint: {} with {} blocks", round_number, new_blocks.len());
+            
             // Persist the round asynchronously
-            let _ = persist_tx.send(PersistMsg::Round(round));
+            let _ = persist_tx.send(PersistMsg::Round(core_round));
         }
+        
         sleep(Duration::from_millis(interval_ms)).await;
     }
 }

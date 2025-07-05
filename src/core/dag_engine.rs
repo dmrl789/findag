@@ -1,7 +1,7 @@
-use crate::core::types::{Block, Transaction, ShardId};
+use crate::core::types::{Block, ShardId};
 use crate::core::address::Address;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
 use tokio::sync::Mutex as TokioMutex;
@@ -37,18 +37,18 @@ pub struct DagEngine {
     vertices: Arc<TokioMutex<HashMap<[u8; 32], DAGVertex>>>,
     tips: Arc<TokioMutex<HashSet<[u8; 32]>>>,
     genesis_blocks: Arc<TokioMutex<Vec<[u8; 32]>>>,
-    max_depth: u64,
+    _max_depth: u64,
     shard_tips: Arc<TokioMutex<HashMap<ShardId, Vec<[u8; 32]>>>>,
     stats: Arc<TokioMutex<DagStats>>,
 }
 
 impl DagEngine {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let mut engine = Self {
             vertices: Arc::new(TokioMutex::new(HashMap::new())),
             tips: Arc::new(TokioMutex::new(HashSet::new())),
             genesis_blocks: Arc::new(TokioMutex::new(Vec::new())),
-            max_depth: 0,
+            _max_depth: 0,
             shard_tips: Arc::new(TokioMutex::new(HashMap::new())),
             stats: Arc::new(TokioMutex::new(DagStats {
                 total_blocks: 0,
@@ -57,8 +57,8 @@ impl DagEngine {
                 avg_txs_per_block: 0.0,
             })),
         };
-        engine.create_genesis_blocks();
-        engine.update_stats();
+        engine.create_genesis_blocks().await;
+        engine.update_stats().await;
         engine
     }
 
@@ -231,6 +231,10 @@ impl DagEngine {
 
 impl Default for DagEngine {
     fn default() -> Self {
-        Self::new()
+        // Note: This is a blocking default implementation
+        // For async initialization, use DagEngine::new().await instead
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(Self::new())
     }
 } 

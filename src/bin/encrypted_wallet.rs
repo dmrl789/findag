@@ -1,10 +1,7 @@
 use clap::{Parser, Subcommand};
 use findag::core::wallet::{Wallet, WalletManager, prompt_password, prompt_password_confirm};
-use findag::core::address::Address;
 use serde::{Serialize, Deserialize};
 use reqwest;
-use std::path::PathBuf;
-use std::io::{self, Write};
 
 #[derive(Parser)]
 #[command(name = "FinDAG Encrypted Wallet")]
@@ -254,7 +251,7 @@ async fn main() {
                 }
             };
             
-            let mut wallet = match wallet_manager.load_wallet(&password) {
+            let wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
                 Err(e) => {
                     eprintln!("Error loading wallet: {}", e);

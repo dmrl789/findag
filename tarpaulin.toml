@@ -1,0 +1,99 @@
+[run]
+# Test timeout in seconds
+timeout = 300
+
+# Output formats
+output = ["Html", "Xml", "Markdown"]
+
+# Output directory
+output-dir = "coverage"
+
+# Coverage type
+type = ["Line", "Branch"]
+
+# Exclude patterns
+exclude = [
+    "*/tests/*",
+    "*/benches/*",
+    "*/examples/*",
+    "*/target/*",
+    "*/node_modules/*",
+    "*/vendor/*",
+    "*/build/*",
+    "*/dist/*",
+    "*/coverage/*",
+    "*/docs/*",
+    "*/.*/*",
+    "*/scripts/*",
+    "*/tools/*",
+    "*/fuzz/*",
+    "*/simulations/*",
+    "*/use_cases/*",
+    "*/findag-ui/*",
+    "*/sdk/*",
+    "*/configs/*",
+    "*/bot_keys/*",
+    "*/benchmarks/*",
+    "*/state_db*",
+    "*/node*",
+    "*/node1_db*",
+]
+
+# Include patterns
+include = [
+    "src/**/*.rs",
+]
+
+# Fail under coverage threshold
+fail-under = 80
+
+# Generate HTML report
+html = true
+
+# Generate XML report for CI
+xml = true
+
+# Generate Markdown report
+markdown = true
+
+# Verbose output
+verbose = true
+
+# Show line numbers in reports
+line-numbers = true
+
+# Show branch coverage
+branch = true
+
+# Show function coverage
+function = true
+
+# Show file coverage
+file = true
+
+# Show module coverage
+module = true
+
+# Show crate coverage
+crate = true
+
+# Show summary
+summary = true
+
+# Show coverage percentage
+percentage = true
+
+# Show uncovered lines
+uncovered = true
+
+# Show partially covered lines
+partial = true
+
+# Show fully covered lines
+covered = true
+
+# Show ignored lines
+ignored = true
+
+# Show total lines
+total = true 

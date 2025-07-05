@@ -32,7 +32,7 @@ pub async fn run_p2p_node(
 
 pub async fn start(
     port: u16,
-    tx_pool: Arc<ShardedTxPool>,
+    _tx_pool: Arc<ShardedTxPool>,
 ) -> std::io::Result<()> {
     let addr = format!("0.0.0.0:{}", port);
     let socket = UdpSocket::bind(&addr).await?;
@@ -40,7 +40,7 @@ pub async fn start(
     
     let mut buf = [0; 1024];
     loop {
-        let (len, _) = socket.recv_from(&mut buf).await?;
+        let (_len, _) = socket.recv_from(&mut buf).await?;
         // TODO: Process incoming messages and add to tx_pool
     }
 } 

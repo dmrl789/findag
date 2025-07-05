@@ -55,32 +55,38 @@ path = "src/bin/tx_analyzer.rs"
 name = "network_tap"
 path = "src/bin/network_tap.rs"
 
+[[bin]]
+name = "roundchain_example"
+path = "src/bin/roundchain_example.rs"
+
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 axum = { version = "0.7", features = ["macros"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 fastrand = "1.9"
+rand = "0.7"
 rand_core = "0.5"
 ed25519-dalek = { version = "1.0", features = ["serde"] }
 curve25519-dalek = "3.2"
+x25519-dalek = "1.0"
+chacha20poly1305 = "0.10"
 bincode = "1.3"
-sha2 = "0.10"
+sha2 = "0.9"
 bech32 = "0.9"
 sled = "0.34"
 hex = "0.4"
-libp2p = { version = "0.53.2", features = ["macros", "gossipsub", "mdns", "kad", "noise", "tcp", "yamux", "tokio"] }
+libp2p = { version = "0.53", features = ["macros", "gossipsub", "mdns", "kad", "noise", "tcp", "yamux", "tokio"] }
 chrono = { version = "0.4", features = ["serde"] }
 libp2p-gossipsub = "0.46"
-libp2p-mdns = { version = "0.45.1", features = ["tokio"] }
+libp2p-mdns = { version = "0.45", features = ["tokio"] }
 libp2p-kad = "0.45"
 libp2p-noise = "0.44"
 prometheus = "0.13"
 lazy_static = "1.4"
-rand = "0.7"
 libp2p-identity = "0.2.8"
 threadpool = "1.8"
-tower-http = { version = "0.5", features = ["cors"] }
+tower-http = { version = "0.5", features = ["cors", "limit", "fs", "trace"] }
 # Wallet encryption dependencies
 argon2 = "0.5"
 aes-gcm = "0.10"
@@ -89,6 +95,12 @@ clap = { version = "4.4", features = ["derive"] }
 reqwest = { version = "0.11", features = ["json"] }
 base64 = "0.21"
 anyhow = "1.0"
+axum-extra = { version = "0.9", features = ["cookie", "typed-header"] }
+jsonwebtoken = "9.3"
+once_cell = "1.19"
+tokio-rustls = "0.25"
+metrics = "0.22"
+tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3.8" 

@@ -1,2 +1,0 @@
-fn(Json<ConfidentialTx>) -> impl Future<Output = Json<serde_json::Value>> {submit_confidential_tx}
-fn(Json<ConfidentialTx>) -> impl Future<Output = Json<serde_json::Value>> {submit_confidential_tx}: Handler<_, _>

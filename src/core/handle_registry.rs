@@ -2,9 +2,8 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{PublicKey, Verifier, Signature};
 use serde::{Serialize, Deserialize};
-use ed25519_dalek::{Keypair, Signer};
-use rand::rngs::OsRng;
-use serde_json::json;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandleRecord {
@@ -80,7 +79,7 @@ impl HandleRegistry {
         // 3. Verify parent signature
         let payload = Self::subhandle_payload_to_sign(instr);
         let parent_pubkey = parent_record.public_key;
-        let sig_bytes = base64::decode(&instr.parent_signature)
+        let sig_bytes = STANDARD.decode(&instr.parent_signature)
             .map_err(|_| "Invalid base64 signature")?;
         let signature = Signature::from_bytes(&sig_bytes)
             .map_err(|_| "Invalid signature bytes")?;
@@ -88,7 +87,7 @@ impl HandleRegistry {
             .map_err(|_| "Parent signature verification failed")?;
 
         // 4. Parse new pubkey
-        let new_pubkey_bytes = base64::decode(&instr.new_pubkey)
+        let new_pubkey_bytes = STANDARD.decode(&instr.new_pubkey)
             .map_err(|_| "Invalid base64 pubkey")?;
         let new_pubkey = PublicKey::from_bytes(&new_pubkey_bytes)
             .map_err(|_| "Invalid pubkey bytes")?;
@@ -147,7 +146,7 @@ impl HandleRegistry {
         // 2. Verify current key signature
         let payload = Self::rotate_key_payload_to_sign(instr);
         let current_pubkey = record.public_key;
-        let sig_bytes = base64::decode(&instr.signature)
+        let sig_bytes = STANDARD.decode(&instr.signature)
             .map_err(|_| "Invalid base64 signature")?;
         let signature = Signature::from_bytes(&sig_bytes)
             .map_err(|_| "Invalid signature bytes")?;
@@ -155,7 +154,7 @@ impl HandleRegistry {
             .map_err(|_| "Current key signature verification failed")?;
 
         // 3. Parse new pubkey
-        let new_pubkey_bytes = base64::decode(&instr.new_pubkey)
+        let new_pubkey_bytes = STANDARD.decode(&instr.new_pubkey)
             .map_err(|_| "Invalid base64 pubkey")?;
         let new_pubkey = PublicKey::from_bytes(&new_pubkey_bytes)
             .map_err(|_| "Invalid pubkey bytes")?;
@@ -209,7 +208,7 @@ impl HandleRegistry {
 
         let payload = Self::revoke_handle_payload_to_sign(instr);
         let parent_pubkey = parent_record.public_key;
-        let sig_bytes = base64::decode(&instr.parent_signature)
+        let sig_bytes = STANDARD.decode(&instr.parent_signature)
             .map_err(|_| "Invalid base64 signature")?;
         let signature = Signature::from_bytes(&sig_bytes)
             .map_err(|_| "Invalid signature bytes")?;
@@ -342,7 +341,7 @@ mod tests {
         let mut instr = RegisterSubhandleInstruction {
             handle: sub_handle.clone(),
             parent: parent_handle.clone(),
-            new_pubkey: base64::encode(sub_keypair.public.to_bytes()),
+            new_pubkey: STANDARD.encode(sub_keypair.public.to_bytes()),
             metadata: Some(json!({"role": "trading desk"})),
             timestamp: timestamp.clone(),
             parent_signature: "".to_string(),
@@ -351,7 +350,7 @@ mod tests {
         // Sign with parent key
         let payload = HandleRegistry::subhandle_payload_to_sign(&instr);
         let sig = parent_keypair.sign(payload.as_bytes());
-        instr.parent_signature = base64::encode(sig.to_bytes());
+        instr.parent_signature = STANDARD.encode(sig.to_bytes());
 
         // Register subhandle
         let result = registry.register_subhandle(&instr);

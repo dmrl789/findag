@@ -1,36 +1,35 @@
-use clap::{App, Arg};
-use ed25519_dalek::{Keypair, Signer};
+use clap::{Command, Arg};
+use ed25519_dalek::Signer;
 use findag::core::address::generate_deterministic_keypair;
-use findag::storage::state::StateDB;
 use reqwest;
 use serde_json::json;
-use std::env;
+use base64::Engine;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = App::new("Initialize Genesis")
+    let matches = Command::new("Initialize Genesis")
         .version("1.0")
         .about("Initialize genesis state with faucet account")
         .arg(
-            Arg::with_name("node-url")
+            Arg::new("node-url")
                 .long("node-url")
                 .value_name("URL")
                 .help("Node HTTP API URL")
                 .default_value("http://127.0.0.1:3000")
-                .takes_value(true),
+                .num_args(1),
         )
         .arg(
-            Arg::with_name("faucet-amount")
+            Arg::new("faucet-amount")
                 .long("faucet-amount")
                 .value_name("AMOUNT")
                 .help("Initial faucet balance in USD")
                 .default_value("1000000")
-                .takes_value(true),
+                .num_args(1),
         )
         .get_matches();
 
-    let node_url = matches.value_of("node-url").unwrap();
-    let faucet_amount: u64 = matches.value_of("faucet-amount").unwrap().parse()?;
+    let node_url = matches.get_one::<String>("node-url").unwrap();
+    let faucet_amount: u64 = matches.get_one::<String>("faucet-amount").unwrap().parse()?;
 
     println!("🔧 Initializing genesis state...");
     println!("📡 Target node: {}", node_url);
@@ -56,11 +55,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "from": genesis_address,
         "to": faucet_address.0,
         "amount": faucet_amount,
-        "signature": dummy_signature.to_bytes().to_vec(),
-        "payload": vec![],
+        "signature": base64::engine::general_purpose::STANDARD.encode(dummy_signature.to_bytes()),
+        "payload": base64::engine::general_purpose::STANDARD.encode(Vec::<u8>::new()),
         "findag_time": 0,
-        "hashtimer": vec![0u8; 32],
-        "public_key": faucet_keypair.public.to_bytes().to_vec(),
+        "hashtimer": base64::engine::general_purpose::STANDARD.encode(vec![0u8; 32]),
+        "public_key": base64::engine::general_purpose::STANDARD.encode(faucet_keypair.public.to_bytes()),
         "shard_id": 0
     });
 
