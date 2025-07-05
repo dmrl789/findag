@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-FinDAG is a high-performance, low-latency, deterministic blockchain system purpose-built for financial applications. **It is implemented in Rust for maximum safety, concurrency, and performance.** Leveraging a dual-layer Directed Acyclic Graph (DAG) structure for both Blocks and Rounds, FinDAG achieves near real-time transaction finality, microsecond audit precision, and multi-million transactions per second (TPS) throughput.
+FinDAG is a high-performance, low-latency, deterministic blockchain system purpose-built for financial applications. **It is implemented in Rust for maximum safety, concurrency, and performance.** Leveraging a BlockDAG for parallel block processing and a linear RoundChain for deterministic finality, FinDAG achieves near real-time transaction finality, microsecond audit precision, and multi-million transactions per second (TPS) throughput.
 
 - **No fees or rewards**
 - **Ed25519** for address signatures
@@ -58,12 +58,13 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
   - Nonce (u32) for uniqueness and distribution
   - Provides precision up to 1/10 of a microsecond
 
-### 4.2 DAG-Based Block & Round Design
+### 4.2 Linear RoundChain with BlockDAG Design
 
-- Blocks form a DAG within micro-intervals (10–50ms)
-- Rounds serve as checkpoint layers (~100–250ms) to finalize DAG paths
-- Enables parallel block inclusion with global ordering
-- Persistent storage of complete DAG structure
+- Blocks form a DAG within micro-intervals (10–50ms) for parallel processing
+- Rounds form a linear chain (~100–250ms) that finalizes all blocks since the previous Round
+- Each Round references only the previous Round, ensuring strict sequentiality
+- Enables parallel block inclusion with deterministic global ordering
+- Persistent storage of complete RoundChain and BlockDAG structure
 
 ### 4.3 Finality in <500ms
 
@@ -350,7 +351,7 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
   - Supports key-value storage with range queries for efficient searching
 
 - **Stored Data Types:**
-  - **Blocks & Rounds:** Complete DAG structure with signatures and timestamps
+  - **Blocks & Rounds:** Complete RoundChain and BlockDAG structure with signatures and timestamps
   - **Asset State:** Current ownership, balances, and complete transaction history
   - **Handle Registry:** All handle records, key history, and hierarchical relationships
   - **Validator Set:** Current validators, status, and metadata
@@ -402,7 +403,7 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
 - **Web-Based Block Explorer:**
   - Real-time visualization of FinDAG state
   - Search by handle, asset ID, block hash, or transaction ID
-  - DAG visualization showing block and round relationships
+  - RoundChain and BlockDAG visualization showing block and round relationships
   - Asset ownership tracking and history visualization
 
 - **Explorer Features:**
@@ -490,7 +491,7 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
 
 ### 5.1 Implemented Features ✅
 
-- **Core Protocol:** DAG-based block and round production
+- **Core Protocol:** Linear RoundChain with BlockDAG production
 - **High-Throughput Transaction Pool:** Sharded in-memory mempool
 - **Persistent Storage:** Sled-based database for all state
 - **Hierarchical Handle System:** Complete identity management
