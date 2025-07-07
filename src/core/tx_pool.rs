@@ -36,11 +36,11 @@ impl TxPool {
         let mut hasher = Sha256::new();
         hasher.update(tx.from.as_str().as_bytes());
         hasher.update(tx.to.as_str().as_bytes());
-        hasher.update(&tx.amount.to_le_bytes());
+        hasher.update(tx.amount.to_le_bytes());
         hasher.update(&tx.payload);
-        hasher.update(&tx.findag_time.to_le_bytes());
-        hasher.update(&tx.public_key.to_bytes());
-        hasher.update(&tx.shard_id.0.to_le_bytes());
+        hasher.update(tx.findag_time.to_le_bytes());
+        hasher.update(tx.public_key.to_bytes());
+        hasher.update(tx.shard_id.0.to_le_bytes());
         hasher.finalize().into()
     }
 
@@ -173,7 +173,7 @@ impl ShardedTxPool {
         let shard = self.shard_for_id(tx.shard_id.0);
         println!("[DEBUG] ShardedTxPool: Adding transaction to shard {} (shard_id={})", shard, tx.shard_id.0);
         let result = self.shards[shard].lock().unwrap().add_transaction(tx);
-        println!("[DEBUG] ShardedTxPool: Transaction add result: {}", result);
+        println!("[DEBUG] ShardedTxPool: Transaction add result: {result}");
         result
     }
     pub fn remove_transaction(&self, tx_hash: &[u8; 32], findag_time: u64, shard_id: u16) {
@@ -183,8 +183,7 @@ impl ShardedTxPool {
     pub fn get_transactions(&self, limit: usize, shard_id: u16) -> Vec<Transaction> {
         let mut txs = Vec::new();
         let shard = self.shard_for_id(shard_id);
-        println!("[DEBUG] ShardedTxPool: get_transactions called with limit={}, shard_id={}, target_shard={}", 
-                 limit, shard_id, shard);
+        println!("[DEBUG] ShardedTxPool: get_transactions called with limit={limit}, shard_id={shard_id}, target_shard={shard}");
         
         let binding = self.shards[shard].lock().unwrap();
         let shard_txs = binding.get_transactions(limit);

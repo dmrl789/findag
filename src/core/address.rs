@@ -1,5 +1,5 @@
-use ed25519_dalek::{Keypair, PublicKey};
-use rand::rngs::OsRng;
+use ed25519_dalek::{SigningKey, VerifyingKey};
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -20,24 +20,29 @@ impl Address {
 
     /// Generate a new random address
     pub fn random() -> Self {
-        let keypair = Keypair::generate(&mut OsRng);
-        let address_bytes = keypair.public.to_bytes();
+        let mut rng = OsRng;
+        let mut secret_bytes = [0u8; 32];
+        rng.fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let verifying_key = signing_key.verifying_key();
+        let address_bytes = verifying_key.to_bytes();
         let address_hex = hex::encode(&address_bytes[..8]); // Use first 8 bytes for shorter addresses
-        Self(format!("FD{}", address_hex))
+        Self(format!("FD{address_hex}"))
     }
 
-    /// Generate a new address from a keypair
-    pub fn from_keypair(keypair: &Keypair) -> Self {
-        let address_bytes = keypair.public.to_bytes();
+    /// Generate a new address from a signing key
+    pub fn from_signing_key(signing_key: &SigningKey) -> Self {
+        let verifying_key = signing_key.verifying_key();
+        let address_bytes = verifying_key.to_bytes();
         let address_hex = hex::encode(&address_bytes[..8]);
-        Self(format!("FD{}", address_hex))
+        Self(format!("FD{address_hex}"))
     }
 
-    /// Generate address from public key
-    pub fn from_public_key(public_key: &PublicKey) -> Self {
-        let addr_bytes = public_key.to_bytes();
+    /// Generate address from verifying key
+    pub fn from_verifying_key(verifying_key: &VerifyingKey) -> Self {
+        let addr_bytes = verifying_key.to_bytes();
         let addr_hex = hex::encode(&addr_bytes[..8]); // Use first 8 bytes for shorter address
-        Address(format!("fdg1q{}", addr_hex))
+        Address(format!("FD{addr_hex}"))
     }
 }
 
@@ -59,33 +64,28 @@ impl From<&str> for Address {
     }
 }
 
-pub fn generate_address() -> (Keypair, Address) {
-    let keypair = Keypair::generate(&mut OsRng);
-    let address = Address::from_public_key(&keypair.public);
-    (keypair, address)
+pub fn generate_address() -> (SigningKey, Address) {
+    let mut rng = OsRng;
+    let mut secret_bytes = [0u8; 32];
+    rng.fill_bytes(&mut secret_bytes);
+    let signing_key = SigningKey::from_bytes(&secret_bytes);
+    let address = Address::from_verifying_key(&signing_key.verifying_key());
+    (signing_key, address)
 }
 
-pub fn generate_keypair() -> Keypair {
-    Keypair::generate(&mut OsRng)
+pub fn generate_signing_key() -> SigningKey {
+    let mut rng = OsRng;
+    let mut secret_bytes = [0u8; 32];
+    rng.fill_bytes(&mut secret_bytes);
+    SigningKey::from_bytes(&secret_bytes)
 }
 
-pub fn generate_deterministic_keypair(seed: &[u8; 32]) -> Keypair {
-    use ed25519_dalek::SecretKey;
-    use ed25519_dalek::SECRET_KEY_LENGTH;
-    
-    // Use the seed directly as the secret key
-    let mut secret_key_bytes = [0u8; SECRET_KEY_LENGTH];
-    secret_key_bytes.copy_from_slice(&seed[..SECRET_KEY_LENGTH]);
-    
-    let _secret_key = SecretKey::from_bytes(&secret_key_bytes)
-        .expect("Failed to create secret key from seed");
-    
-    Keypair::from_bytes(&secret_key_bytes)
-        .expect("Failed to create keypair from seed")
+pub fn generate_deterministic_signing_key(seed: &[u8; 32]) -> SigningKey {
+    SigningKey::from_bytes(seed)
 }
 
-pub fn generate_address_from_keypair(keypair: &Keypair) -> Address {
-    Address::from_public_key(&keypair.public)
+pub fn generate_address_from_signing_key(signing_key: &SigningKey) -> Address {
+    Address::from_verifying_key(&signing_key.verifying_key())
 }
 
 #[cfg(test)]
@@ -108,9 +108,12 @@ mod tests {
     }
 
     #[test]
-    fn test_address_from_keypair() {
-        let keypair = Keypair::generate(&mut OsRng);
-        let addr = Address::from_keypair(&keypair);
+    fn test_address_from_signing_key() {
+        let mut rng = OsRng;
+        let mut secret_bytes = [0u8; 32];
+        rng.fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let addr = Address::from_signing_key(&signing_key);
         assert!(addr.as_str().starts_with("FD"));
     }
 } 

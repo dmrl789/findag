@@ -1,18 +1,24 @@
 // round_finalizer.rs
 // FinDAG deterministic validator assignment and round finalization
 
-use ed25519_dalek::{Keypair, PublicKey, Signer, Verifier};
+use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier, SecretKey};
 use crate::consensus::validator_set::{ValidatorSet, Committee, CommitteeConfig};
 use serde::{Serialize, Deserialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
 use hex;
+use crate::consensus::roundchain::Round;
+use crate::core::types::{Block, Transaction};
+use crate::core::address::Address;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Represents a validator in the network
 #[derive(Clone, Debug)]
 pub struct Validator {
     pub id: String,
-    pub public_key: PublicKey,
+    pub public_key: VerifyingKey,
 }
 
 /// Represents a round commitment from a validator
@@ -21,7 +27,7 @@ pub struct RoundCommitment {
     pub round_number: u64,
     pub block_hash: [u8; 32],
     pub timestamp: u64,
-    pub signature: Option<ed25519_dalek::Signature>,
+    pub signature: Option<Signature>,
     pub proposer: Option<crate::core::address::Address>,
 }
 
@@ -29,7 +35,7 @@ pub struct RoundCommitment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockCommitment {
     pub block_hash: [u8; 32],
-    pub validator: PublicKey,
+    pub validator: VerifyingKey,
     pub signature: Vec<u8>,
 }
 
@@ -47,7 +53,7 @@ pub struct CommitteeFinalization {
 /// Round finalizer for consensus
 pub struct RoundFinalizer<'a> {
     validator_set: &'a mut ValidatorSet,
-    keypair: Option<&'a Keypair>,
+    keypair: Option<&'a SigningKey>,
     local_address: Option<crate::core::address::Address>,
     current_round: u64,
     _round_timeout: Duration,
@@ -59,7 +65,7 @@ impl<'a> RoundFinalizer<'a> {
     /// Create a new round finalizer
     pub fn new(
         validator_set: &'a mut ValidatorSet, 
-        keypair: Option<&'a Keypair>,
+        keypair: Option<&'a SigningKey>,
         local_address: Option<crate::core::address::Address>
     ) -> Self {
         Self {
@@ -236,7 +242,7 @@ mod tests {
     use super::*;
     use crate::core::address::generate_address;
 
-    fn _create_validator(_name: &str) -> (crate::core::address::Address, Keypair) {
+    fn _create_validator(_name: &str) -> (crate::core::address::Address, SigningKey) {
         let (keypair, address) = generate_address();
         (address, keypair)
     }
@@ -263,9 +269,9 @@ mod tests {
             let (keypair, address) = generate_address();
             validator_set.add_validator_with_metadata(
                 address,
-                keypair.public,
+                keypair.verifying_key(),
                 1000, // stake
-                format!("validator_{}", i), // institution_name
+                format!("validator_{i}"), // institution_name
                 "test_region".to_string(), // region
             );
         }
@@ -288,9 +294,9 @@ mod tests {
             let (keypair, address) = generate_address();
             validator_set.add_validator_with_metadata(
                 address,
-                keypair.public,
+                keypair.verifying_key(),
                 1000, // stake
-                format!("validator_{}", i), // institution_name
+                format!("validator_{i}"), // institution_name
                 "test_region".to_string(), // region
             );
         }

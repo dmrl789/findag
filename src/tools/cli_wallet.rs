@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signer, SECRET_KEY_LENGTH};
+use ed25519_dalek::{SigningKey, VerifyingKey, Signer};
 use std::fs;
 use std::path::PathBuf;
 use std::io::{self, Write};
@@ -7,6 +7,7 @@ use hex;
 use crate::core::address::{Address, generate_address};
 use serde::{Serialize, Deserialize};
 use reqwest;
+use chrono;
 
 #[derive(Parser)]
 #[command(name = "FinDAG CLI Wallet")]
@@ -67,7 +68,7 @@ struct ApiTransaction {
 
 #[allow(dead_code)]
 async fn fetch_asset_whitelist(node_url: &str) -> Vec<String> {
-    let url = format!("{}/assets", node_url);
+    let url = format!("{node_url}/assets");
     match reqwest::get(&url).await {
         Ok(resp) => match resp.json::<serde_json::Value>().await {
             Ok(json) => json["assets"].as_array().map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()).unwrap_or_default(),
@@ -83,32 +84,30 @@ async fn main() {
     let cli = Cli::parse();
     match &cli.command {
         Commands::Generate {} => {
-            let (keypair, address) = generate_address();
+            let (signing_key, address) = generate_address();
             println!("Address: {}", address.as_str());
-            println!("Public Key: {}", hex::encode(keypair.public.as_bytes()));
-            println!("Secret Key: {}", hex::encode(keypair.secret.as_bytes()));
+            println!("Public Key: {}", hex::encode(signing_key.verifying_key().to_bytes()));
+            println!("Secret Key: {}", hex::encode(signing_key.to_bytes()));
         }
         Commands::Import { secret } => {
             let secret_bytes = hex::decode(secret).expect("Invalid hex");
-            assert_eq!(secret_bytes.len(), SECRET_KEY_LENGTH);
-            let secret = SecretKey::from_bytes(&secret_bytes).unwrap();
-            let public = PublicKey::from(&secret);
-            let keypair = Keypair { secret, public };
-            let address = Address::from_public_key(&keypair.public);
+            assert_eq!(secret_bytes.len(), 32);
+            let signing_key = SigningKey::from_bytes(&secret_bytes.try_into().unwrap());
+            let address = Address::from_signing_key(&signing_key);
             println!("Imported Address: {}", address.as_str());
         }
         Commands::Export { file } => {
-            let keypair = load_keypair(file);
-            println!("Secret Key: {}", hex::encode(keypair.secret.as_bytes()));
+            let signing_key = load_signing_key(file);
+            println!("Secret Key: {}", hex::encode(signing_key.to_bytes()));
         }
         Commands::Address { file } => {
-            let keypair = load_keypair(file);
-            let address = Address::from_public_key(&keypair.public);
+            let signing_key = load_signing_key(file);
+            let address = Address::from_signing_key(&signing_key);
             println!("Address: {}", address.as_str());
         }
         Commands::Balance { file } => {
-            let keypair = load_keypair(file);
-            let address = Address::from_public_key(&keypair.public);
+            let signing_key = load_signing_key(file);
+            let address = Address::from_signing_key(&signing_key);
             // Prompt for asset code (default to USD)
             print!("Enter asset code (default: USD): ");
             io::stdout().flush().unwrap();
@@ -118,7 +117,7 @@ async fn main() {
             let asset = if asset.is_empty() { "USD" } else { asset };
             let whitelist = fetch_asset_whitelist(&cli.node_url).await;
             if !whitelist.contains(&asset.to_string()) {
-                println!("Error: '{}' is not a supported asset.", asset);
+                println!("Error: '{asset}' is not a supported asset.");
                 return;
             }
             let url = format!("{}/balance/{}/{}", cli.node_url, address.as_str(), asset);
@@ -128,39 +127,61 @@ async fn main() {
         }
         Commands::Send { file, to, amount, currency } => {
             let whitelist = fetch_asset_whitelist(&cli.node_url).await;
-            if !whitelist.contains(&currency) {
-                println!("Error: '{}' is not a supported asset.", currency);
+            if !whitelist.contains(currency) {
+                println!("Error: '{currency}' is not a supported asset.");
                 return;
             }
-            let keypair = load_keypair(file);
-            let from_address = Address::from_public_key(&keypair.public);
+            let signing_key = load_signing_key(file);
+            let from_address = Address::from_signing_key(&signing_key);
             let to_address = Address(to.clone());
-            let signature = keypair.sign(b"mock-tx");
+            let signature = signing_key.sign(b"mock-tx");
             let tx = ApiTransaction {
                 from: from_address.as_str().to_string(),
                 to: to_address.as_str().to_string(),
                 amount: *amount,
                 currency: currency.clone(),
                 signature: hex::encode(signature.to_bytes()),
-                public_key: hex::encode(keypair.public.as_bytes()),
+                public_key: hex::encode(signing_key.verifying_key().to_bytes()),
             };
             let url = format!("{}/tx", cli.node_url);
             let client = reqwest::Client::new();
             let resp = client.post(&url).json(&tx).send().await.expect("Failed to send tx");
             let json: serde_json::Value = resp.json().await.expect("Invalid response");
-            println!("Node response: {}", json);
+            println!("Node response: {json}");
         }
     }
 }
 
 #[allow(dead_code)]
-fn load_keypair(file: &PathBuf) -> Keypair {
+fn load_signing_key(file: &PathBuf) -> SigningKey {
     let sk_hex = fs::read_to_string(file).expect("Failed to read key file");
     let sk_bytes = hex::decode(sk_hex.trim()).expect("Invalid hex in key file");
-    assert_eq!(sk_bytes.len(), SECRET_KEY_LENGTH);
-    let secret = SecretKey::from_bytes(&sk_bytes).unwrap();
-    let public = PublicKey::from(&secret);
-    Keypair { secret, public }
+    assert_eq!(sk_bytes.len(), 32);
+    SigningKey::from_bytes(&sk_bytes.try_into().unwrap())
+}
+
+fn load_signing_key_from_file(path: &str) -> Result<SigningKey, Box<dyn std::error::Error>> {
+    let keypair_data = fs::read_to_string(path)?;
+    let keypair_json: serde_json::Value = serde_json::from_str(&keypair_data)?;
+    
+    if let Some(secret_key_hex) = keypair_json["secret_key"].as_str() {
+        let secret_bytes = hex::decode(secret_key_hex)?;
+        let signing_key = SigningKey::from_bytes(&secret_bytes.try_into().unwrap());
+        Ok(signing_key)
+    } else {
+        Err("Invalid keypair format".into())
+    }
+}
+
+fn save_signing_key_to_file(signing_key: &SigningKey, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let keypair_data = serde_json::json!({
+        "secret_key": hex::encode(signing_key.to_bytes()),
+        "public_key": hex::encode(signing_key.verifying_key().to_bytes()),
+        "created_at": chrono::Utc::now().to_rfc3339()
+    });
+    
+    fs::write(path, serde_json::to_string_pretty(&keypair_data)?)?;
+    Ok(())
 }
 
 // Usage examples:

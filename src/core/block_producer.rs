@@ -1,14 +1,22 @@
 use crate::core::{
     dag_engine::DagEngine,
     tx_pool::ShardedTxPool,
-    types::{Block, ShardId},
+    types::{Block, Transaction, ShardId},
+    address::Address,
 };
-use crate::core::address::Address;
 use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
-use ed25519_dalek::{Keypair, Signature, Signer};
+use ed25519_dalek::{Signature, Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use bincode;
 use tracing;
+use crate::consensus::validator_set::ValidatorSet;
+use crate::consensus::roundchain::Round;
+use libp2p_identity::Keypair;
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
+use std::sync::Arc;
 
 /// Configuration for block production
 #[derive(Clone)]
@@ -30,7 +38,7 @@ pub struct BlockProducer<'a> {
     pub dag: &'a mut DagEngine,
     pub tx_pool: &'a ShardedTxPool,
     pub proposer: Address,
-    pub keypair: &'a Keypair,
+    pub keypair: &'a SigningKey,
     pub config: BlockProducerConfig,
     pub time_manager: &'a FinDAGTimeManager,
     pub current_round: u64,
@@ -42,7 +50,7 @@ impl<'a> BlockProducer<'a> {
         dag: &'a mut DagEngine,
         tx_pool: &'a ShardedTxPool,
         proposer: Address,
-        keypair: &'a Keypair,
+        keypair: &'a SigningKey,
         config: BlockProducerConfig,
         time_manager: &'a FinDAGTimeManager,
     ) -> Self {
@@ -141,9 +149,9 @@ impl<'a> BlockProducer<'a> {
             hashtimer,
             proposer: self.proposer.clone(),
             parent_blocks,
-            signature: Signature::from_bytes(&[0u8; 64]).unwrap(), // Placeholder
+            signature: Signature::from_bytes(&[0u8; 64]), // Placeholder
             block_id: [0u8; 32], // Will be computed
-            public_key: self.keypair.public,
+            public_key: self.keypair.verifying_key(),
             shard_id: self.config.shard_id,
             merkle_root: None,
         };

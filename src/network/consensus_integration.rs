@@ -4,7 +4,7 @@ use crate::core::types::{SerializableTransaction, SerializableBlock, Serializabl
 use crate::core::dag_engine::DagEngine;
 use crate::core::tx_pool::ShardedTxPool;
 use crate::core::address::Address;
-use ed25519_dalek::{Keypair, PublicKey, Verifier};
+use ed25519_dalek::{SigningKey, VerifyingKey, Verifier};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -66,7 +66,7 @@ pub struct ConsensusIntegration {
     rate_config: RateLimitConfig,
     local_address: Address,
     #[allow(dead_code)]
-    local_keypair: Option<Keypair>,
+    local_keypair: Option<SigningKey>,
 }
 
 #[allow(dead_code)]
@@ -77,7 +77,7 @@ impl ConsensusIntegration {
         dag: Arc<Mutex<DagEngine>>,
         tx_pool: Arc<ShardedTxPool>,
         local_address: Address,
-        local_keypair: Option<Keypair>,
+        local_keypair: Option<SigningKey>,
     ) -> Self {
         Self {
             propagator,
@@ -424,19 +424,23 @@ impl ConsensusIntegration {
     /// Verify transaction signature
     async fn verify_transaction_signature(&self, tx: &SerializableTransaction) -> Result<(), String> {
         // Convert signature bytes to signature
-        let signature = ed25519_dalek::Signature::from_bytes(&tx.signature_bytes)
-            .map_err(|_| "Invalid signature format".to_string())?;
+        let signature = ed25519_dalek::Signature::from_bytes(&tx.signature_bytes.clone().try_into().unwrap());
         
         // Convert public key bytes to public key
-        let public_key = PublicKey::from_bytes(&tx.public_key_bytes)
+        let public_key = VerifyingKey::from_bytes(&tx.public_key_bytes.clone().try_into().unwrap())
             .map_err(|_| "Invalid public key format".to_string())?;
         
-        // Create message to verify
-        let message = format!("{}{}{}", tx.from.as_str(), tx.to.as_str(), tx.amount);
+        // Create message to verify (transaction content)
+        let mut message = Vec::new();
+        message.extend_from_slice(tx.from.as_str().as_bytes());
+        message.extend_from_slice(tx.to.as_str().as_bytes());
+        message.extend_from_slice(&tx.amount.to_be_bytes());
+        message.extend_from_slice(&tx.findag_time.to_be_bytes());
+        message.extend_from_slice(&tx.hashtimer);
         
         // Verify signature
-        public_key.verify(message.as_bytes(), &signature)
-            .map_err(|_| "Signature verification failed".to_string())?;
+        public_key.verify(&message, &signature)
+            .map_err(|_| "Transaction signature verification failed".to_string())?;
         
         Ok(())
     }
@@ -444,11 +448,10 @@ impl ConsensusIntegration {
     /// Verify block signature
     async fn verify_block_signature(&self, block: &SerializableBlock) -> Result<(), String> {
         // Convert signature bytes to signature
-        let signature = ed25519_dalek::Signature::from_bytes(&block.signature_bytes)
-            .map_err(|_| "Invalid signature format".to_string())?;
+        let signature = ed25519_dalek::Signature::from_bytes(&block.signature_bytes.clone().try_into().unwrap());
         
         // Convert public key bytes to public key
-        let public_key = PublicKey::from_bytes(&block.public_key_bytes)
+        let public_key = VerifyingKey::from_bytes(&block.public_key_bytes.clone().try_into().unwrap())
             .map_err(|_| "Invalid public key format".to_string())?;
         
         // Verify signature against block ID
@@ -461,11 +464,10 @@ impl ConsensusIntegration {
     /// Verify round signature
     async fn verify_round_signature(&self, round: &SerializableRound) -> Result<(), String> {
         // Convert signature bytes to signature
-        let signature = ed25519_dalek::Signature::from_bytes(&round.proposer_signature_bytes)
-            .map_err(|_| "Invalid signature format".to_string())?;
+        let signature = ed25519_dalek::Signature::from_bytes(&round.proposer_signature_bytes.clone().try_into().unwrap());
         
         // Convert public key bytes to public key
-        let public_key = PublicKey::from_bytes(&round.proposer_public_key_bytes)
+        let public_key = VerifyingKey::from_bytes(&round.proposer_public_key_bytes.clone().try_into().unwrap())
             .map_err(|_| "Invalid public key format".to_string())?;
         
         // Create message to verify (round content)

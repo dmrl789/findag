@@ -3,11 +3,17 @@
 
 use crate::consensus::validator_set::ValidatorSet;
 use crate::core::address::generate_address;
-use ed25519_dalek::Keypair;
+use ed25519_dalek::SigningKey;
 
 pub struct QuorumDemo {
     validator_set: ValidatorSet,
-    _demo_validators: Vec<(Keypair, crate::core::address::Address)>,
+    _demo_validators: Vec<(SigningKey, crate::core::address::Address)>,
+}
+
+impl Default for QuorumDemo {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl QuorumDemo {
@@ -25,15 +31,15 @@ impl QuorumDemo {
         ];
 
         for (i, institution) in institutions.iter().enumerate() {
-            let (keypair, address) = generate_address();
+            let (signing_key, address) = generate_address();
             validator_set.add_validator_with_metadata(
                 address.clone(),
-                keypair.public,
+                signing_key.verifying_key(),
                 1000 + (i as u64 * 100), // Varying stakes
                 institution.to_string(),
                 "US".to_string(),
             );
-            demo_validators.push((keypair, address));
+            demo_validators.push((signing_key, address));
         }
 
         Self {
@@ -101,7 +107,7 @@ impl QuorumDemo {
                 println!("  {}. {} ({}) - Reputation: {:.2}", 
                     i + 1,
                     validator.institution_name.as_ref().unwrap_or(&"Unknown".to_string()),
-                    validator_addr.as_str()[..8].to_string(),
+                    &validator_addr.as_str()[..8],
                     validator.reputation.reputation_score
                 );
             }
@@ -123,10 +129,10 @@ impl QuorumDemo {
         for (i, validator_addr) in committee_validators.iter().enumerate() {
             if i < 12 { // First 12 validators sign (achieving quorum)
                 self.validator_set.record_signature(validator_addr, 1);
-                println!("  ✅ {} signed", validator_addr.as_str()[..8].to_string());
+                println!("  ✅ {} signed", &validator_addr.as_str()[..8]);
             } else { // Last 8 validators miss the signature
                 self.validator_set.record_missed_signature(validator_addr, 1);
-                println!("  ❌ {} missed", validator_addr.as_str()[..8].to_string());
+                println!("  ❌ {} missed", &validator_addr.as_str()[..8]);
             }
         }
 
@@ -206,10 +212,10 @@ impl QuorumDemo {
         for (i, validator_addr) in committee_info.0.iter().enumerate() {
             if i < 8 {
                 self.validator_set.record_signature(validator_addr, committee_info.1);
-                println!("  ✅ {} signed", validator_addr.as_str()[..8].to_string());
+                println!("  ✅ {} signed", &validator_addr.as_str()[..8]);
             } else {
                 self.validator_set.record_missed_signature(validator_addr, committee_info.1);
-                println!("  ❌ {} missed", validator_addr.as_str()[..8].to_string());
+                println!("  ❌ {} missed", &validator_addr.as_str()[..8]);
             }
         }
 
@@ -238,15 +244,15 @@ impl QuorumDemo {
         println!();
         
         println!("Traditional BFT (2/3+1):");
-        println!("  • Total Validators: {}", total_validators);
+        println!("  • Total Validators: {total_validators}");
         println!("  • Required Signatures: {}", (total_validators * 2) / 3 + 1);
         println!("  • Network Messages: O({}²) = ~{}", total_validators, total_validators * total_validators);
         println!("  • Estimated Finality: 10-30 seconds");
         println!();
 
         println!("FinDAG Quorum Rotation:");
-        println!("  • Total Validators: {}", total_validators);
-        println!("  • Committee Size: {}", committee_size);
+        println!("  • Total Validators: {total_validators}");
+        println!("  • Committee Size: {committee_size}");
         println!("  • Required Signatures: {} ({}%)", quorum_size, 
             (quorum_size as f64 / committee_size as f64 * 100.0) as u32
         );
@@ -258,7 +264,7 @@ impl QuorumDemo {
         println!("🚀 Efficiency Improvement:");
         println!("  • Network Messages: {}x reduction", efficiency_gain as u32);
         println!("  • Finality Speed: 5-15x faster");
-        println!("  • Scalability: Handles {} validators efficiently", total_validators);
+        println!("  • Scalability: Handles {total_validators} validators efficiently");
     }
 }
 

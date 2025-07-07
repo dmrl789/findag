@@ -1,5 +1,6 @@
 use crate::core::address::{Address, generate_address};
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signer};
+use crate::core::types::Transaction;
+use ed25519_dalek::{VerifyingKey, SigningKey, Signer};
 use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::Path;
@@ -10,7 +11,8 @@ use aes_gcm::aead::Aead;
 use rand::Rng;
 use hex;
 use chrono::{DateTime, Utc};
-// Removed unused import: FromStr
+use std::collections::HashMap;
+use serde_json;
 
 /// Encrypted wallet data structure
 #[derive(Serialize, Deserialize, Debug)]
@@ -45,52 +47,90 @@ impl Default for Argon2Params {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WalletAccount {
     pub name: String,
-    pub address: String,
-    pub public_key: String,
-    pub created_at: DateTime<Utc>,
-    pub is_default: bool,
+    pub signing_key: SigningKey,
+    pub address: Address,
+    pub balance: HashMap<String, u64>, // asset -> amount
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl WalletAccount {
+    pub fn new(name: String, signing_key: SigningKey) -> Self {
+        let address = Address::from_verifying_key(&signing_key.verifying_key());
+        Self {
+            name,
+            signing_key,
+            address,
+            balance: HashMap::new(),
+            metadata: None,
+        }
+    }
+
+    pub fn sign_transaction(&self, transaction: &mut Transaction) -> Result<(), String> {
+        // Create message to sign
+        let mut message = Vec::new();
+        message.extend_from_slice(transaction.from.as_str().as_bytes());
+        message.extend_from_slice(transaction.to.as_str().as_bytes());
+        message.extend_from_slice(&transaction.amount.to_be_bytes());
+        message.extend_from_slice(&transaction.findag_time.to_be_bytes());
+        message.extend_from_slice(&transaction.hashtimer);
+        
+        // Sign the message
+        let signature = self.signing_key.sign(&message);
+        
+        // Update transaction
+        transaction.signature = signature;
+        transaction.public_key = self.signing_key.verifying_key();
+        
+        Ok(())
+    }
 }
 
 /// Main wallet structure
 #[derive(Serialize, Deserialize)]
 pub struct Wallet {
-    keypair: Keypair,
+    signing_key: SigningKey,
     address: Address,
     accounts: Vec<WalletAccount>,
 }
 
+impl Default for Wallet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Wallet {
-    /// Create a new wallet with a new keypair
+    /// Create a new wallet with a new signing key
     pub fn new() -> Self {
-        let (keypair, address) = generate_address();
+        let (signing_key, address) = generate_address();
         let account = WalletAccount {
             name: "default".to_string(),
-            address: address.as_str().to_string(),
-            public_key: hex::encode(keypair.public.as_bytes()),
-            created_at: Utc::now(),
-            is_default: true,
+            signing_key: signing_key.clone(),
+            address: address.clone(),
+            balance: HashMap::new(),
+            metadata: None,
         };
         
         Self {
-            keypair,
+            signing_key,
             address,
             accounts: vec![account],
         }
     }
 
-    /// Create wallet from existing keypair
-    pub fn from_keypair(keypair: Keypair) -> Self {
-        let address = Address::from_public_key(&keypair.public);
+    /// Create wallet from existing signing key
+    pub fn from_signing_key(signing_key: SigningKey) -> Self {
+        let address = Address::from_verifying_key(&signing_key.verifying_key());
         let account = WalletAccount {
             name: "default".to_string(),
-            address: address.as_str().to_string(),
-            public_key: hex::encode(keypair.public.as_bytes()),
-            created_at: Utc::now(),
-            is_default: true,
+            signing_key: signing_key.clone(),
+            address: address.clone(),
+            balance: HashMap::new(),
+            metadata: None,
         };
         
         Self {
-            keypair,
+            signing_key,
             address,
             accounts: vec![account],
         }
@@ -103,12 +143,12 @@ impl Wallet {
 
     /// Get the public key as hex string
     pub fn public_key_hex(&self) -> String {
-        hex::encode(self.keypair.public.as_bytes())
+        hex::encode(self.signing_key.verifying_key().to_bytes())
     }
 
     /// Sign a message
     pub fn sign(&self, message: &[u8]) -> Vec<u8> {
-        self.keypair.sign(message).to_bytes().to_vec()
+        self.signing_key.sign(message).to_bytes().to_vec()
     }
 
     /// Get all accounts
@@ -118,13 +158,13 @@ impl Wallet {
 
     /// Add a new account
     pub fn add_account(&mut self, name: &str) -> Result<(), String> {
-        let (new_keypair, new_address) = generate_address();
+        let (new_signing_key, new_address) = generate_address();
         let account = WalletAccount {
             name: name.to_string(),
-            address: new_address.as_str().to_string(),
-            public_key: hex::encode(new_keypair.public.as_bytes()),
-            created_at: Utc::now(),
-            is_default: false,
+            signing_key: new_signing_key,
+            address: new_address,
+            balance: HashMap::new(),
+            metadata: None,
         };
         
         self.accounts.push(account);
@@ -133,7 +173,7 @@ impl Wallet {
 
     /// Export private key as hex (for backup purposes)
     pub fn export_private_key(&self) -> String {
-        hex::encode(self.keypair.secret.as_bytes())
+        hex::encode(self.signing_key.to_bytes())
     }
 
     /// Import private key from hex
@@ -145,12 +185,9 @@ impl Wallet {
             return Err("Invalid private key length".to_string());
         }
         
-        let secret = SecretKey::from_bytes(&secret_bytes)
-            .map_err(|_| "Invalid private key")?;
-        let public = PublicKey::from(&secret);
-        let keypair = Keypair { secret, public };
+        let signing_key = SigningKey::from_bytes(&secret_bytes.try_into().map_err(|_| "Invalid private key length")?);
         
-        Ok(Self::from_keypair(keypair))
+        Ok(Self::from_signing_key(signing_key))
     }
 }
 
@@ -281,7 +318,7 @@ impl WalletManager {
 
 /// Utility function to prompt for password securely
 pub fn prompt_password(prompt: &str) -> Result<String, String> {
-    print!("{}: ", prompt);
+    print!("{prompt}: ");
     io::stdout().flush().map_err(|_| "Failed to flush stdout")?;
     
     rpassword::read_password()

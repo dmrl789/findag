@@ -50,7 +50,7 @@ pub fn validate_hashtimer(hashtimer_hex: &str, expected_content: &[u8]) -> bool 
         let computed_hash = hasher.finalize();
         
         // Convert computed hash to hex and compare only the first 50 hex chars
-        let computed_hex = format!("{:x}", computed_hash);
+        let computed_hex = format!("{computed_hash:x}");
         let computed_prefix = &computed_hex[..50];
         
         // The hash suffix should match the computed hash prefix
@@ -73,7 +73,7 @@ pub fn format_findag_time(time_value: u64) -> String {
     let seconds = microseconds / 1_000_000;
     let remaining_micros = microseconds % 1_000_000;
     
-    format!("{}s {}μs (FinDAG: {})", seconds, remaining_micros, time_value)
+    format!("{seconds}s {remaining_micros}μs (FinDAG: {time_value})")
 }
 
 /// Audit a HashTimer and print detailed information
@@ -82,15 +82,15 @@ pub fn format_findag_time(time_value: u64) -> String {
 /// * `hashtimer_hex` - The HashTimer to audit
 /// * `content` - Optional content for hash validation
 pub fn audit_hashtimer(hashtimer_hex: &str, content: Option<&[u8]>) {
-    println!("🔍 HashTimer Audit: {}", hashtimer_hex);
+    println!("🔍 HashTimer Audit: {hashtimer_hex}");
     println!("{}", "=".repeat(60));
     
     match decode_hashtimer(hashtimer_hex) {
         Some((time_value, time_prefix, hash_suffix)) => {
             println!("✅ Valid HashTimer structure");
             println!("📅 FinDAG Time: {}", format_findag_time(time_value));
-            println!("⏰ Time Prefix: 0x{}", time_prefix);
-            println!("🔐 Hash Suffix: 0x{}", hash_suffix);
+            println!("⏰ Time Prefix: 0x{time_prefix}");
+            println!("🔐 Hash Suffix: 0x{hash_suffix}");
             println!("📏 Time bits: {} bits", time_prefix.len() * 4);
             println!("📏 Hash bits: {} bits", hash_suffix.len() * 4);
             
@@ -128,8 +128,8 @@ mod tests {
         
         println!("Decoded HashTimer:");
         println!("Time: {}", format_findag_time(time_value));
-        println!("Prefix: 0x{}", time_prefix);
-        println!("Suffix: 0x{}", hash_suffix);
+        println!("Prefix: 0x{time_prefix}");
+        println!("Suffix: 0x{hash_suffix}");
     }
     
     #[test]
@@ -142,10 +142,10 @@ mod tests {
         
         // Create a HashTimer with time prefix + hash
         let time_prefix = "1234567890abcd"; // 14 hex chars
-        let hash_suffix = format!("{:x}", hash);
+        let hash_suffix = format!("{hash:x}");
         // Truncate hash to fit exactly 64 characters total
         let hash_suffix = &hash_suffix[..50]; // 50 hex chars to make total 64
-        let hashtimer = format!("{}{}", time_prefix, hash_suffix);
+        let hashtimer = format!("{time_prefix}{hash_suffix}");
         
         // Ensure the hashtimer is exactly 64 hex characters
         assert_eq!(hashtimer.len(), 64);

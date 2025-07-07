@@ -97,7 +97,7 @@ impl StateDB {
         let key = format!("state:{shard_id}:{address}:{asset}");
         let value = balance.to_string();
         self.db.insert(key, value.as_bytes())
-            .map_err(|e| format!("Failed to set balance: {}", e))?;
+            .map_err(|e| format!("Failed to set balance: {e}"))?;
         Ok(())
     }
 
@@ -139,7 +139,7 @@ impl StateDB {
     /// Get all accounts on a shard
     pub fn get_accounts(&self, shard_id: u16) -> Vec<String> {
         let mut accounts = Vec::new();
-        let prefix = format!("state:{}:", shard_id);
+        let prefix = format!("state:{shard_id}:");
         
         for result in self.db.scan_prefix(prefix.as_bytes()) {
             if let Ok((key, _)) = result {

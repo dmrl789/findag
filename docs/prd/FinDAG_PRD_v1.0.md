@@ -615,7 +615,7 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
 
 - **Clone the Repository:**
   ```sh
-  git clone https://github.com/your-org/findag.git
+  git clone https://github.com/findag/findag.git
   cd findag
   ```
 
@@ -646,6 +646,65 @@ FinDAG is a high-performance, low-latency, deterministic blockchain system purpo
     cargo run --bin cli_wallet -- generate
     cargo run --bin cli_wallet -- send --file mykey.txt --to <address> --amount 1000 --currency USD --node-url http://127.0.0.1:8080
     ```
+
+- **Automated Transaction Bot Example:**
+  - You can automate transaction generation and submission using a Rust bot. This is useful for testing high-throughput scenarios or integration with external systems.
+  - Example (see `src/bin/test_bot.rs`):
+    ```rust
+    use libp2p_identity::Keypair;
+    use reqwest::Client;
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+    use std::time::Duration;
+    use rand::rngs::OsRng;
+    
+    #[tokio::main]
+    async fn main() -> anyhow::Result<()> {
+        // Generate test keypair
+        let keypair = Keypair::generate_ed25519();
+        let from_pubkey = hex::encode(keypair.public().encode_protobuf());
+        let to = "fdg1qalice1234567890";
+        let amount = 123u64;
+        let shard_id = 0u16;
+        let findag_time = 29381272980000000u64; // Current FinDAG time
+        let payload = format!("{from_pubkey}{to}{amount}").into_bytes();
+        let mut hashtimer = [0u8; 32];
+        let mut hasher = Sha256::new();
+        hasher.update(&payload);
+        hasher.update(findag_time.to_be_bytes());
+        let hash_result = hasher.finalize();
+        hashtimer.copy_from_slice(&hash_result);
+        let mut hasher = Sha256::new();
+        hasher.update(&payload);
+        hasher.update(findag_time.to_be_bytes());
+        hasher.update(hashtimer);
+        let msg_hash = hasher.finalize();
+        let signature = keypair.sign(&msg_hash).expect("Failed to sign message").to_vec();
+        let public_key_bytes = keypair.public().encode_protobuf();
+        let tx = json!({
+            "from": from_pubkey,
+            "to": to,
+            "amount": amount,
+            "signature": signature,
+            "payload": payload,
+            "findag_time": findag_time,
+            "hashtimer": hashtimer.to_vec(),
+            "public_key": public_key_bytes,
+            "shard_id": shard_id
+        });
+        let client = Client::new();
+        let resp = client.post("http://127.0.0.1:3000/tx")
+            .timeout(Duration::from_secs(5))
+            .json(&tx)
+            .send()
+            .await?;
+        println!("Server response: {}", resp.status());
+        let body = resp.text().await?;
+        println!("Body: {body}");
+        Ok(())
+    }
+    ```
+  - This bot generates a new Ed25519 keypair, constructs a transaction payload, signs it, and submits it to the local FinDAG node API. Adjust the fields as needed for your test scenario.
 
 - **Testing & Fuzzing:**
   - Run all tests:

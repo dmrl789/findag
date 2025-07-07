@@ -1,15 +1,20 @@
-use std::collections::HashMap;
-use chrono::{DateTime, Utc};
-use ed25519_dalek::{PublicKey, Verifier, Signature};
+use ed25519_dalek::{SigningKey, Signature, Signer, VerifyingKey, Verifier};
+use libp2p_identity::PublicKey;
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+use hex;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandleRecord {
     pub handle: String,
     pub parent: Option<String>,
-    pub public_key: PublicKey,
+    pub public_key: VerifyingKey,
     pub key_history: Vec<KeyHistory>,
     pub metadata: Option<serde_json::Value>,
     pub registered_at: DateTime<Utc>,
@@ -21,7 +26,7 @@ pub struct HandleRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyHistory {
-    pub public_key: PublicKey,
+    pub public_key: VerifyingKey,
     pub rotated_at: DateTime<Utc>,
     pub rotated_by: String,
 }
@@ -29,7 +34,7 @@ pub struct KeyHistory {
 #[derive(Default)]
 pub struct HandleRegistry {
     pub handles: HashMap<String, HandleRecord>,
-    pub pubkey_to_handle: Vec<(PublicKey, String)>,
+    pub pubkey_to_handle: Vec<(VerifyingKey, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,19 +86,22 @@ impl HandleRegistry {
         let parent_pubkey = parent_record.public_key;
         let sig_bytes = STANDARD.decode(&instr.parent_signature)
             .map_err(|_| "Invalid base64 signature")?;
-        let signature = Signature::from_bytes(&sig_bytes)
-            .map_err(|_| "Invalid signature bytes")?;
+        let signature = Signature::from_bytes(&sig_bytes.try_into().map_err(|_| "Invalid signature length")?);
         parent_pubkey.verify(payload.as_bytes(), &signature)
             .map_err(|_| "Parent signature verification failed")?;
 
         // 4. Parse new pubkey
         let new_pubkey_bytes = STANDARD.decode(&instr.new_pubkey)
             .map_err(|_| "Invalid base64 pubkey")?;
-        let new_pubkey = PublicKey::from_bytes(&new_pubkey_bytes)
+        let new_pubkey = PublicKey::try_decode_protobuf(&new_pubkey_bytes)
             .map_err(|_| "Invalid pubkey bytes")?;
+        
+        // Convert libp2p_identity::PublicKey to ed25519_dalek::VerifyingKey
+        let new_pubkey_ed25519 = VerifyingKey::from_bytes(&new_pubkey_bytes.try_into().map_err(|_| "Invalid pubkey length")?)
+            .map_err(|_| "Invalid ed25519 public key format")?;
 
         // 5. Check pubkey not already in use
-        if self.pubkey_to_handle.iter().any(|&(pubkey, _)| pubkey == new_pubkey) {
+        if self.pubkey_to_handle.iter().any(|&(pubkey, _)| pubkey == new_pubkey_ed25519) {
             return Err("Public key already in use by another handle".to_string());
         }
 
@@ -106,9 +114,9 @@ impl HandleRegistry {
         let record = HandleRecord {
             handle: instr.handle.clone(),
             parent: Some(instr.parent.clone()),
-            public_key: new_pubkey,
+            public_key: new_pubkey_ed25519,
             key_history: vec![KeyHistory {
-                public_key: new_pubkey,
+                public_key: new_pubkey_ed25519,
                 rotated_at: now,
                 rotated_by: instr.parent.clone(),
             }],
@@ -122,7 +130,7 @@ impl HandleRegistry {
 
         // 8. Insert record and update indexes
         self.handles.insert(instr.handle.clone(), record);
-        self.pubkey_to_handle.push((new_pubkey, instr.handle.clone()));
+        self.pubkey_to_handle.push((new_pubkey_ed25519, instr.handle.clone()));
         
         // 9. Update parent's children
         let parent = self.handles.get_mut(&instr.parent).unwrap();
@@ -148,38 +156,38 @@ impl HandleRegistry {
         let current_pubkey = record.public_key;
         let sig_bytes = STANDARD.decode(&instr.signature)
             .map_err(|_| "Invalid base64 signature")?;
-        let signature = Signature::from_bytes(&sig_bytes)
-            .map_err(|_| "Invalid signature bytes")?;
+        let signature = Signature::from_bytes(&sig_bytes.try_into().map_err(|_| "Invalid signature length")?);
         current_pubkey.verify(payload.as_bytes(), &signature)
             .map_err(|_| "Current key signature verification failed")?;
 
         // 3. Parse new pubkey
         let new_pubkey_bytes = STANDARD.decode(&instr.new_pubkey)
             .map_err(|_| "Invalid base64 pubkey")?;
-        let new_pubkey = PublicKey::from_bytes(&new_pubkey_bytes)
+        let new_pubkey = PublicKey::try_decode_protobuf(&new_pubkey_bytes)
             .map_err(|_| "Invalid pubkey bytes")?;
-
-        // 4. Check new pubkey not already in use
-        if self.pubkey_to_handle.iter().any(|&(pubkey, _)| pubkey == new_pubkey) {
+        
+        // Convert libp2p_identity::PublicKey to ed25519_dalek::VerifyingKey
+        let new_pubkey_ed25519 = VerifyingKey::from_bytes(&new_pubkey_bytes.try_into().map_err(|_| "Invalid pubkey length")?)
+            .map_err(|_| "Invalid ed25519 public key format")?;
+        
+        // 5. Check pubkey not already in use
+        if self.pubkey_to_handle.iter().any(|&(pubkey, _)| pubkey == new_pubkey_ed25519) {
             return Err("Public key already in use by another handle".to_string());
         }
-
-        // 5. Parse timestamp
-        let now = DateTime::parse_from_rfc3339(&instr.timestamp)
-            .map_err(|_| "Invalid timestamp")?
-            .with_timezone(&Utc);
-
-        // 6. Update key history
+        
+        // 6. Update record
+        let now = Utc::now();
         record.key_history.push(KeyHistory {
             public_key: record.public_key,
             rotated_at: now,
             rotated_by: instr.handle.clone(),
         });
-
+        
         // 7. Update indexes
-        self.pubkey_to_handle.retain(|&(pubkey, _)| pubkey != current_pubkey);
-        self.pubkey_to_handle.push((new_pubkey, instr.handle.clone()));
-        record.public_key = new_pubkey;
+        self.pubkey_to_handle.push((new_pubkey_ed25519, instr.handle.clone()));
+        
+        // 8. Update record
+        record.public_key = new_pubkey_ed25519;
 
         Ok(())
     }
@@ -210,8 +218,7 @@ impl HandleRegistry {
         let parent_pubkey = parent_record.public_key;
         let sig_bytes = STANDARD.decode(&instr.parent_signature)
             .map_err(|_| "Invalid base64 signature")?;
-        let signature = Signature::from_bytes(&sig_bytes)
-            .map_err(|_| "Invalid signature bytes")?;
+        let signature = Signature::from_bytes(&sig_bytes.try_into().map_err(|_| "Invalid signature length")?);
         parent_pubkey.verify(payload.as_bytes(), &signature)
             .map_err(|_| "Parent signature verification failed")?;
 
@@ -244,7 +251,7 @@ impl HandleRegistry {
     }
 
     /// Lookup by public key
-    pub fn resolve_by_pubkey(&self, pubkey: &PublicKey) -> Option<&HandleRecord> {
+    pub fn resolve_by_pubkey(&self, pubkey: &VerifyingKey) -> Option<&HandleRecord> {
         self.pubkey_to_handle.iter().find_map(|(pk, handle)| {
             if pk == pubkey {
                 self.handles.get(handle)

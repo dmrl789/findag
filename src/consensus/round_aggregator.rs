@@ -32,7 +32,7 @@ impl<'a> RoundAggregator<'a> {
 
         // Finalize round if threshold reached
         if self.commitments.len() >= self.finalizer.get_quorum_threshold() {
-            println!("[RoundAggregator] Round {} finalization threshold met!", round_number);
+            println!("[RoundAggregator] Round {round_number} finalization threshold met!");
             // Finalize and reset pool
             self.block_pool.clear();
             self.commitments.clear();

@@ -50,12 +50,12 @@ fn main() {
     println!("📊 Test Account Balances:");
     for account in test_accounts {
         let balance = state_db.get_balance(0, account, "USD");
-        println!("  {}: {} USD", account, balance);
+        println!("  {account}: {balance} USD");
     }
     
     println!("\n🤖 Bot Account Balances:");
     for account in bot_accounts {
         let balance = state_db.get_balance(0, account, "USD");
-        println!("  {}: {} USD", account, balance);
+        println!("  {account}: {balance} USD");
     }
 } 

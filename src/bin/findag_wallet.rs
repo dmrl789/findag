@@ -159,41 +159,41 @@ struct SignedRotateKeyInstruction {
 }
 
 async fn query_balances(node_url: &str, handle: &str) -> Result<Vec<AssetBalance>, String> {
-    let url = format!("{}/assets?owner={}", node_url, handle);
+    let url = format!("{node_url}/assets?owner={handle}");
     let client = reqwest::Client::new();
     
     let response = client.get(&url)
         .header("Content-Type", "application/json")
         .send()
         .await
-        .map_err(|e| format!("Failed to query node: {}", e))?;
+        .map_err(|e| format!("Failed to query node: {e}"))?;
     
     if !response.status().is_success() {
         return Err(format!("Node returned error: {}", response.status()));
     }
     
     let balances: Vec<AssetBalance> = response.json().await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
     
     Ok(balances)
 }
 
 fn load_wallet_config(wallet_file: &str) -> Result<WalletConfig, String> {
-    let config_file = format!("{}.config", wallet_file);
+    let config_file = format!("{wallet_file}.config");
     let config_data = fs::read_to_string(&config_file)
         .map_err(|_| "No wallet config found. Run 'keygen' first.".to_string())?;
     
     serde_json::from_str(&config_data)
-        .map_err(|e| format!("Invalid config format: {}", e))
+        .map_err(|e| format!("Invalid config format: {e}"))
 }
 
 fn save_wallet_config(wallet_file: &str, config: &WalletConfig) -> Result<(), String> {
-    let config_file = format!("{}.config", wallet_file);
+    let config_file = format!("{wallet_file}.config");
     let config_data = serde_json::to_string_pretty(config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
     
     fs::write(&config_file, config_data)
-        .map_err(|e| format!("Failed to write config: {}", e))
+        .map_err(|e| format!("Failed to write config: {e}"))
 }
 
 #[tokio::main]
@@ -205,11 +205,11 @@ async fn main() {
         Commands::Keygen { handle } => {
             let password = match prompt_password_confirm() {
                 Ok(pwd) => pwd,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             let wallet = match wallet_manager.create_wallet(&password) {
                 Ok(w) => w,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             // Save wallet config with handle
@@ -218,11 +218,11 @@ async fn main() {
                 public_key: wallet.public_key_hex(),
             };
             if let Err(e) = save_wallet_config(&cli.wallet_file, &config) {
-                eprintln!("Warning: Failed to save config: {}", e);
+                eprintln!("Warning: Failed to save config: {e}");
             }
             
             println!("✅ Key generated successfully!");
-            println!("Handle: {}", handle);
+            println!("Handle: {handle}");
             println!("Public Key: {}", wallet.public_key_hex());
             println!("Wallet file: {}", cli.wallet_file);
             println!("⚠️  Keep your password safe - it cannot be recovered!");
@@ -231,23 +231,23 @@ async fn main() {
         Commands::ImportKey { file, handle } => {
             let password = match prompt_password_confirm() {
                 Ok(pwd) => pwd,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             // Read private key from file
             let private_key_hex = match fs::read_to_string(file) {
                 Ok(s) => s.trim().to_string(),
-                Err(e) => { eprintln!("Failed to read key file: {}", e); return; }
+                Err(e) => { eprintln!("Failed to read key file: {e}"); return; }
             };
             
             let wallet = match Wallet::from_private_key_hex(&private_key_hex) {
                 Ok(w) => w,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             // Save encrypted wallet
             if let Err(e) = wallet_manager.save_wallet(&wallet, &password) {
-                eprintln!("Error saving wallet: {}", e);
+                eprintln!("Error saving wallet: {e}");
                 return;
             }
             
@@ -257,18 +257,18 @@ async fn main() {
                 public_key: wallet.public_key_hex(),
             };
             if let Err(e) = save_wallet_config(&cli.wallet_file, &config) {
-                eprintln!("Warning: Failed to save config: {}", e);
+                eprintln!("Warning: Failed to save config: {e}");
             }
             
             println!("✅ Key imported successfully!");
-            println!("Handle: {}", handle);
+            println!("Handle: {handle}");
             println!("Public Key: {}", wallet.public_key_hex());
         }
         
         Commands::Identity {} => {
             let config = match load_wallet_config(&cli.wallet_file) {
                 Ok(c) => c,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             println!("Handle: {}", config.handle);
@@ -278,7 +278,7 @@ async fn main() {
         Commands::Balances {} => {
             let config = match load_wallet_config(&cli.wallet_file) {
                 Ok(c) => c,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             println!("Querying balances for {}...", config.handle);
@@ -299,7 +299,7 @@ async fn main() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error querying balances: {}", e);
+                    eprintln!("Error querying balances: {e}");
                 }
             }
         }
@@ -307,21 +307,21 @@ async fn main() {
         Commands::LoadAsset(args) => {
             let config = match load_wallet_config(&cli.wallet_file) {
                 Ok(c) => c,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             let wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             let metadata: serde_json::Value = match serde_json::from_str(&args.metadata) {
                 Ok(m) => m,
-                Err(e) => { eprintln!("Invalid metadata JSON: {}", e); return; }
+                Err(e) => { eprintln!("Invalid metadata JSON: {e}"); return; }
             };
             
             let instr = LoadAssetInstruction {
@@ -342,22 +342,22 @@ async fn main() {
             };
             
             let out = serde_json::to_string_pretty(&signed).unwrap();
-            println!("{}", out);
+            println!("{out}");
         }
         
         Commands::TransferAsset(args) => {
             let config = match load_wallet_config(&cli.wallet_file) {
                 Ok(c) => c,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             let wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             let instr = TransferAssetInstruction {
@@ -377,26 +377,26 @@ async fn main() {
             };
             
             let out = serde_json::to_string_pretty(&signed).unwrap();
-            println!("{}", out);
+            println!("{out}");
         }
         
         Commands::SignOwnership { asset_id } => {
             let config = match load_wallet_config(&cli.wallet_file) {
                 Ok(c) => c,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             let wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             let timestamp = chrono::Utc::now().timestamp() as u64;
-            let message = format!("I own {} at timestamp {}", asset_id, timestamp);
+            let message = format!("I own {asset_id} at timestamp {timestamp}");
             
             let proof = OwnershipProof {
                 r#type: "ownership_proof".to_string(),
@@ -415,25 +415,25 @@ async fn main() {
             };
             
             let out = serde_json::to_string_pretty(&signed).unwrap();
-            println!("{}", out);
+            println!("{out}");
         }
         
         Commands::SignInstruction { file } => {
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             let wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             
             let instr_json: serde_json::Value = match fs::read_to_string(file) {
                 Ok(s) => match serde_json::from_str(&s) {
                     Ok(j) => j,
-                    Err(e) => { eprintln!("Invalid JSON: {}", e); return; }
+                    Err(e) => { eprintln!("Invalid JSON: {e}"); return; }
                 },
-                Err(e) => { eprintln!("Failed to read file: {}", e); return; }
+                Err(e) => { eprintln!("Failed to read file: {e}"); return; }
             };
             
             let sig = wallet.sign(serde_json::to_string(&instr_json).unwrap().as_bytes());
@@ -444,13 +444,13 @@ async fn main() {
             };
             
             let out = serde_json::to_string_pretty(&signed).unwrap();
-            println!("{}", out);
+            println!("{out}");
         }
         
         Commands::Broadcast { file } => {
             let signed_json = match fs::read_to_string(file) {
                 Ok(s) => s,
-                Err(e) => { eprintln!("Failed to read file: {}", e); return; }
+                Err(e) => { eprintln!("Failed to read file: {e}"); return; }
             };
             
             let client = reqwest::Client::new();
@@ -465,10 +465,10 @@ async fn main() {
                 Ok(resp) => {
                     let status = resp.status();
                     let text = resp.text().await.unwrap_or_default();
-                    println!("Node response ({}): {}", status, text);
+                    println!("Node response ({status}): {text}");
                 }
                 Err(e) => {
-                    eprintln!("Failed to broadcast: {}", e);
+                    eprintln!("Failed to broadcast: {e}");
                 }
             }
         }
@@ -477,26 +477,26 @@ async fn main() {
             // 1. Load wallet config and old key
             let config = match load_wallet_config(&cli.wallet_file) {
                 Ok(c) => c,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             let password = match prompt_password("Enter wallet password (old key)") {
                 Ok(pwd) => pwd,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             let old_wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
-                Err(e) => { eprintln!("Error: {}", e); return; }
+                Err(e) => { eprintln!("Error: {e}"); return; }
             };
             let prev_pubkey = old_wallet.public_key_hex();
 
             // 2. Read new private key from file
             let new_key_hex = match fs::read_to_string(new_key) {
                 Ok(s) => s.trim().to_string(),
-                Err(e) => { eprintln!("Failed to read new key file: {}", e); return; }
+                Err(e) => { eprintln!("Failed to read new key file: {e}"); return; }
             };
             let new_wallet = match Wallet::from_private_key_hex(&new_key_hex) {
                 Ok(w) => w,
-                Err(e) => { eprintln!("Invalid new private key: {}", e); return; }
+                Err(e) => { eprintln!("Invalid new private key: {e}"); return; }
             };
             let new_pubkey = new_wallet.public_key_hex();
 
@@ -525,15 +525,15 @@ async fn main() {
 
             // 5. Output signed instruction to file
             let out_json = serde_json::to_string_pretty(&signed).unwrap();
-            if let Err(e) = fs::write(&out, out_json) {
-                eprintln!("Failed to write signed instruction: {}", e);
+            if let Err(e) = fs::write(out, out_json) {
+                eprintln!("Failed to write signed instruction: {e}");
                 return;
             }
-            println!("✅ RotateKey instruction signed and saved to {:?}", out);
+            println!("✅ RotateKey instruction signed and saved to {out:?}");
 
             // 6. Update local wallet to use new key
             if let Err(e) = wallet_manager.save_wallet(&new_wallet, &password) {
-                eprintln!("Failed to update wallet to new key: {}", e);
+                eprintln!("Failed to update wallet to new key: {e}");
                 return;
             }
             // Update config with new public key
@@ -542,7 +542,7 @@ async fn main() {
                 public_key: new_pubkey,
             };
             if let Err(e) = save_wallet_config(&cli.wallet_file, &new_config) {
-                eprintln!("Warning: Failed to update wallet config: {}", e);
+                eprintln!("Warning: Failed to update wallet config: {e}");
             }
             println!("✅ Local wallet updated to new key.");
         }

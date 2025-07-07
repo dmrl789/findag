@@ -1,4 +1,4 @@
-use ed25519_dalek::{Keypair, Signer};
+use libp2p_identity::Keypair;
 use reqwest::Client;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -9,17 +9,17 @@ use rand::rngs::OsRng;
 async fn main() -> anyhow::Result<()> {
     // 1) Generate test keypair
     let mut csprng = OsRng {};
-    let keypair = Keypair::generate(&mut csprng);
+    let keypair = Keypair::generate_ed25519();
 
     // 2) Prepare transaction fields
-    let from_pubkey = hex::encode(keypair.public.as_bytes());
+    let from_pubkey = hex::encode(keypair.public().encode_protobuf());
     let to = "fdg1qalice1234567890";
     let amount = 123u64;
     let shard_id = 0u16;
     let findag_time = 29381272980000000u64; // Current FinDAG time
     
     // 3) Create payload (transaction data)
-    let payload = format!("{}{}{}", from_pubkey, to, amount).into_bytes();
+    let payload = format!("{from_pubkey}{to}{amount}").into_bytes();
     
     // 4) Create hashtimer (32-byte array)
     let mut hashtimer = [0u8; 32];
@@ -33,16 +33,15 @@ async fn main() -> anyhow::Result<()> {
     let mut hasher = Sha256::new();
     hasher.update(&payload);
     hasher.update(findag_time.to_be_bytes());
-    hasher.update(&hashtimer);
+    hasher.update(hashtimer);
     let msg_hash = hasher.finalize();
 
     // 6) Sign the hash
     let signature = keypair.sign(&msg_hash);
-    let signature_bytes = signature.to_bytes().to_vec();
-    let public_key_bytes = keypair.public.to_bytes().to_vec();
+    let signature_bytes = signature.expect("Failed to sign message").to_vec();
+    let public_key_bytes = keypair.public().encode_protobuf();
 
-    println!("Bot sending TX: from={} to={} amount={} shard_id={} findag_time={}",
-        from_pubkey, to, amount, shard_id, findag_time);
+    println!("Bot sending TX: from={from_pubkey} to={to} amount={amount} shard_id={shard_id} findag_time={findag_time}");
     println!("Signature hex: {}", hex::encode(&signature_bytes));
     println!("Public key hex: {}", hex::encode(&public_key_bytes));
 
@@ -69,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Server response: {}", resp.status());
     let body = resp.text().await?;
-    println!("Body: {}", body);
+    println!("Body: {body}");
 
     Ok(())
 } 

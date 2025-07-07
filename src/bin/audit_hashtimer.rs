@@ -31,7 +31,7 @@ fn main() {
     
     if cli.time_only {
         if let Some((time_value, _, _)) = decode_hashtimer(&cli.hashtimer) {
-            println!("{}", time_value);
+            println!("{time_value}");
         } else {
             eprintln!("Invalid HashTimer format");
             std::process::exit(1);
@@ -41,7 +41,7 @@ fn main() {
     
     if cli.prefix_only {
         if let Some((_, time_prefix, _)) = decode_hashtimer(&cli.hashtimer) {
-            println!("0x{}", time_prefix);
+            println!("0x{time_prefix}");
         } else {
             eprintln!("Invalid HashTimer format");
             std::process::exit(1);
@@ -51,7 +51,7 @@ fn main() {
     
     if cli.suffix_only {
         if let Some((_, _, hash_suffix)) = decode_hashtimer(&cli.hashtimer) {
-            println!("0x{}", hash_suffix);
+            println!("0x{hash_suffix}");
         } else {
             eprintln!("Invalid HashTimer format");
             std::process::exit(1);

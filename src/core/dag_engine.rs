@@ -92,8 +92,8 @@ impl DagEngine {
             findag_time: 0,
             hashtimer: block_id,
             proposer: Address("genesis".to_string()),
-            signature: ed25519_dalek::Signature::from_bytes(&[0u8; 64]).unwrap(),
-            public_key: ed25519_dalek::PublicKey::from_bytes(&[0u8; 32]).unwrap(),
+            signature: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            public_key: ed25519_dalek::VerifyingKey::from_bytes(&[0u8; 32]).unwrap(),
             shard_id,
             merkle_root: Some(block_id),
         }
@@ -200,13 +200,13 @@ impl DagEngine {
 
     fn compute_block_id(&self, block: &Block) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        hasher.update(&block.shard_id.0.to_be_bytes());
-        hasher.update(&block.findag_time.to_be_bytes());
-        hasher.update(&block.hashtimer);
+        hasher.update(block.shard_id.0.to_be_bytes());
+        hasher.update(block.findag_time.to_be_bytes());
+        hasher.update(block.hashtimer);
         for tx in &block.transactions {
-            hasher.update(&tx.from.0.as_bytes());
-            hasher.update(&tx.to.0.as_bytes());
-            hasher.update(&tx.amount.to_be_bytes());
+            hasher.update(tx.from.0.as_bytes());
+            hasher.update(tx.to.0.as_bytes());
+            hasher.update(tx.amount.to_be_bytes());
         }
         let result = hasher.finalize();
         let mut block_id = [0u8; 32];

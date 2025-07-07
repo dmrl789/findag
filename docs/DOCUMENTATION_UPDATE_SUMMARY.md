@@ -21,6 +21,9 @@ This document summarizes the comprehensive update to FinDAG's documentation to e
 - Corrected API examples to match actual implementation
 - Updated getting started section with current commands and endpoints
 - Added new use cases for FX trading, cross-chain settlement, and traditional finance integration
+- Added a new section with a Rust example for automated transaction submission using a bot
+- Updated transaction format documentation to match the latest implementation (all fields as byte arrays, signature, etc.)
+- Updated all GitHub URLs to 'findag/findag'
 
 ### 2. API Reference Document
 **File:** `docs/api_reference.md`
@@ -102,6 +105,13 @@ This document summarizes the comprehensive update to FinDAG's documentation to e
 - Added current features and limitations sections
 - Provided clear guidance on production readiness status
 - Added bridge integration examples and testing procedures
+
+### 10. Transaction Bot Documentation & PRD Update
+**Date:** January 2025
+**Changes:**
+- Added a new section to the PRD ('docs/prd/FinDAG_PRD_v1.0.md') with a Rust example for automated transaction submission using a bot.
+- Updated transaction format documentation to match the latest implementation (all fields as byte arrays, signature, etc.).
+- Updated all GitHub URLs to 'findag/findag'
 
 ## Current Implementation Status
 

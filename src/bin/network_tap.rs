@@ -20,7 +20,7 @@ fn main() {
                 });
             }
             Err(e) => {
-                eprintln!("Connection failed: {}", e);
+                eprintln!("Connection failed: {e}");
             }
         }
     }
@@ -41,7 +41,7 @@ fn handle_connection(mut stream: std::net::TcpStream) {
             }
             Ok(_) => break,
             Err(e) => {
-                eprintln!("Error reading from client: {}", e);
+                eprintln!("Error reading from client: {e}");
                 return;
             }
         }
@@ -49,7 +49,7 @@ fn handle_connection(mut stream: std::net::TcpStream) {
     
     let request_str = String::from_utf8_lossy(&request_data);
     println!("📥 CAPTURED REQUEST:");
-    println!("{}", request_str);
+    println!("{request_str}");
     println!("📥 END REQUEST");
     
     // Forward to the actual node
@@ -57,14 +57,14 @@ fn handle_connection(mut stream: std::net::TcpStream) {
     let mut node_stream = match std::net::TcpStream::connect("127.0.0.1:3000") {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Failed to connect to node: {}", e);
+            eprintln!("Failed to connect to node: {e}");
             return;
         }
     };
     
     // Send request to node
     if let Err(e) = node_stream.write_all(&request_data) {
-        eprintln!("Failed to forward request: {}", e);
+        eprintln!("Failed to forward request: {e}");
         return;
     }
     
@@ -82,7 +82,7 @@ fn handle_connection(mut stream: std::net::TcpStream) {
             }
             Ok(_) => break,
             Err(e) => {
-                eprintln!("Error reading from node: {}", e);
+                eprintln!("Error reading from node: {e}");
                 break;
             }
         }
@@ -90,12 +90,12 @@ fn handle_connection(mut stream: std::net::TcpStream) {
     
     let response_str = String::from_utf8_lossy(&response_data);
     println!("📤 NODE RESPONSE:");
-    println!("{}", response_str);
+    println!("{response_str}");
     println!("📤 END RESPONSE");
     println!("⏱️  Round-trip time: {:?}", start.elapsed());
     
     // Send response back to client
     if let Err(e) = stream.write_all(&response_data) {
-        eprintln!("Failed to send response to client: {}", e);
+        eprintln!("Failed to send response to client: {e}");
     }
 } 

@@ -1,4 +1,4 @@
-use ed25519_dalek::{Signature, PublicKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use crate::core::address::Address;
 extern crate hex;
 use serde::{Serialize, Deserialize};
@@ -17,7 +17,7 @@ pub struct Transaction {
     pub findag_time: u64,      // FinDAG Time
     pub hashtimer: [u8; 32],  // HashTimer
     pub signature: Signature,  // Ed25519 signature
-    pub public_key: PublicKey, // For signature verification
+    pub public_key: VerifyingKey, // For signature verification
     pub shard_id: ShardId,     // Shard assignment (default: ShardId(0))
     // Cross-shard transaction support
     pub source_shard: Option<u16>, // If present, indicates cross-shard tx
@@ -69,8 +69,8 @@ impl TryFrom<SerializableTransaction> for Transaction {
     type Error = Box<dyn std::error::Error>;
     
     fn try_from(stx: SerializableTransaction) -> Result<Self, Self::Error> {
-        let signature = Signature::from_bytes(&stx.signature_bytes)?;
-        let public_key = PublicKey::from_bytes(&stx.public_key_bytes)?;
+        let signature = Signature::from_bytes(&stx.signature_bytes.try_into().map_err(|_| "Invalid signature length")?);
+        let public_key = VerifyingKey::from_bytes(&stx.public_key_bytes.try_into().map_err(|_| "Invalid public key length")?)?;
         
         Ok(Self {
             from: stx.from,
@@ -100,7 +100,7 @@ pub struct Block {
     pub hashtimer: [u8; 32],          // HashTimer
     pub proposer: Address,            // Block proposer address
     pub signature: Signature,         // Ed25519 signature
-    pub public_key: PublicKey,        // For signature verification
+    pub public_key: VerifyingKey,        // For signature verification
     pub shard_id: ShardId,            // Shard assignment (default: ShardId(0))
     pub merkle_root: Option<[u8; 32]>, // Merkle root of transactions (None for legacy blocks)
 }
@@ -141,8 +141,8 @@ impl TryFrom<SerializableBlock> for Block {
     type Error = Box<dyn std::error::Error>;
     
     fn try_from(sblock: SerializableBlock) -> Result<Self, Self::Error> {
-        let signature = Signature::from_bytes(&sblock.signature_bytes)?;
-        let public_key = PublicKey::from_bytes(&sblock.public_key_bytes)?;
+        let signature = Signature::from_bytes(&sblock.signature_bytes.try_into().map_err(|_| "Invalid signature length")?);
+        let public_key = VerifyingKey::from_bytes(&sblock.public_key_bytes.try_into().map_err(|_| "Invalid public key length")?)?;
         let transactions: Result<Vec<Transaction>, _> = sblock.transactions
             .into_iter()
             .map(|stx| stx.try_into())
@@ -176,7 +176,7 @@ pub struct Round {
     pub findag_time: u64,                     // FinDAG Time for deterministic ordering
     pub proposer: Address,                    // Round proposer address
     pub proposer_signature: Signature,        // Proposer's signature
-    pub proposer_public_key: PublicKey,       // Proposer's public key
+    pub proposer_public_key: VerifyingKey,       // Proposer's public key
 }
 
 /// Serializable version of Round for network transmission
@@ -213,8 +213,8 @@ impl TryFrom<SerializableRound> for Round {
     type Error = Box<dyn std::error::Error>;
     
     fn try_from(sround: SerializableRound) -> Result<Self, Self::Error> {
-        let proposer_signature = Signature::from_bytes(&sround.proposer_signature_bytes)?;
-        let proposer_public_key = PublicKey::from_bytes(&sround.proposer_public_key_bytes)?;
+        let proposer_signature = Signature::from_bytes(&sround.proposer_signature_bytes.try_into().map_err(|_| "Invalid signature length")?);
+        let proposer_public_key = VerifyingKey::from_bytes(&sround.proposer_public_key_bytes.try_into().map_err(|_| "Invalid public key length")?)?;
         
         Ok(Self {
             round_number: sround.round_number,
@@ -254,7 +254,7 @@ impl Block {
         use crate::core::bridge::merkle_root;
         if let Some(expected_root) = self.merkle_root {
             let tx_hashes: Vec<String> = self.transactions.iter().map(|tx| {
-                hex::encode(&tx.hashtimer)
+                hex::encode(tx.hashtimer)
             }).collect();
             let computed_hex = merkle_root(&tx_hashes);
             let mut computed = [0u8; 32];

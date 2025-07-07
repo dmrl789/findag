@@ -2,7 +2,7 @@ use crate::core::dag_engine::DagEngine;
 use crate::core::types::Round;
 use crate::core::address::Address;
 use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
-use ed25519_dalek::Keypair;
+use ed25519_dalek::SigningKey;
 use tokio::time::{sleep, Duration};
 use std::collections::HashSet;
 use crate::storage::persistent::PersistMsg;
@@ -14,7 +14,7 @@ use crate::consensus::roundchain::RoundChain;
 pub async fn run_round_checkpoint_loop(
     dag: &mut DagEngine,
     proposer: Address,
-    keypair: &Keypair,
+    keypair: &SigningKey,
     interval_ms: u64,
     time_manager: &FinDAGTimeManager,
     persist_tx: UnboundedSender<PersistMsg>,

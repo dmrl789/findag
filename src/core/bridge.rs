@@ -60,7 +60,7 @@ impl Bridge {
         // TODO: Implement proof verification
         let _hash_proof = "dummy_hash_proof".to_string();
         let _root = "dummy_merkle_root".to_string();
-        let _proof = vec!["dummy_proof".to_string()];
+        let _proof = ["dummy_proof".to_string()];
         
         // For now, return true as placeholder
         true

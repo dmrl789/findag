@@ -1,6 +1,6 @@
-use x25519_dalek::{StaticSecret, PublicKey};
+use x25519_dalek::{EphemeralSecret, PublicKey};
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::{Aead, Payload}};
-use ed25519_dalek::Keypair;
+use ed25519_dalek::SigningKey;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -53,18 +53,18 @@ impl PeerEncryptionState {
 
 /// P2P encryption manager
 pub struct P2PEncryption {
-    local_secret: StaticSecret,
+    local_secret: EphemeralSecret,
     local_public: PublicKey,
     peer_states: Arc<Mutex<HashMap<Address, PeerEncryptionState>>>,
     config: EncryptionConfig,
 }
 
 impl P2PEncryption {
-    /// Create a new encryption manager from an ed25519 keypair
-    pub fn new_from_ed25519(_ed25519_keypair: &Keypair) -> Self {
-        // For v1.0, we generate a new static secret
-        // In production, you might want to derive this from the ed25519 key
-        let local_secret = StaticSecret::new(&mut OsRng);
+    /// Create a new encryption manager from an ed25519 signing key
+    pub fn new_from_ed25519(_ed25519_signing_key: &SigningKey) -> Self {
+        // In a real implementation, you'd derive the x25519 key from ed25519
+        // For now, we'll create a new ephemeral key
+        let local_secret = EphemeralSecret::random_from_rng(OsRng);
         let local_public = PublicKey::from(&local_secret);
         
         Self {
@@ -87,10 +87,14 @@ impl P2PEncryption {
 
     /// Perform key exchange with a peer
     pub async fn perform_key_exchange(&self, peer_address: Address, peer_public_key_bytes: Vec<u8>) -> Result<(), String> {
+        // Convert peer public key bytes to PublicKey
         let peer_public_key = PublicKey::from(<[u8; 32]>::try_from(&peer_public_key_bytes[..]).map_err(|_| "Invalid peer public key".to_string())?);
         
+        // Create a new ephemeral secret for this key exchange
+        let local_secret = EphemeralSecret::random_from_rng(OsRng);
+        
         // Compute shared secret
-        let shared_secret = self.local_secret.diffie_hellman(&peer_public_key);
+        let shared_secret = local_secret.diffie_hellman(&peer_public_key);
         
         // Create cipher from shared secret
         let cipher = ChaCha20Poly1305::new_from_slice(shared_secret.as_bytes())
@@ -222,13 +226,13 @@ impl P2PEncryption {
             peer_states.remove(&peer);
         }
         
-        println!("🧹 Cleaned up {} old encryption states", old_count);
+        println!("🧹 Cleaned up {old_count} old encryption states");
     }
 
     /// Rotate encryption keys (for security)
     pub async fn rotate_encryption_keys(&self) {
-        // Create new static secret
-        let new_secret = StaticSecret::new(&mut OsRng);
+        // Create new ephemeral secret
+        let new_secret = EphemeralSecret::random_from_rng(OsRng);
         let new_public = PublicKey::from(&new_secret);
         
         // In a real implementation, you'd want to update the local keys
@@ -240,8 +244,8 @@ impl P2PEncryption {
 
 impl Clone for P2PEncryption {
     fn clone(&self) -> Self {
-        // Create a new static secret for the clone
-        let new_secret = StaticSecret::new(&mut OsRng);
+        // Create a new ephemeral secret for the clone
+        let new_secret = EphemeralSecret::random_from_rng(OsRng);
         let new_public = PublicKey::from(&new_secret);
         
         Self {
@@ -259,11 +263,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_key_exchange_and_encryption() {
-        let keypair1 = Keypair::generate(&mut OsRng);
-        let keypair2 = Keypair::generate(&mut OsRng);
+        let mut rng = OsRng;
+        let mut secret_bytes1 = [0u8; 32];
+        let mut secret_bytes2 = [0u8; 32];
+        rng.fill_bytes(&mut secret_bytes1);
+        rng.fill_bytes(&mut secret_bytes2);
+        let signing_key1 = SigningKey::from_bytes(&secret_bytes1).expect("Failed to create signing key");
+        let signing_key2 = SigningKey::from_bytes(&secret_bytes2).expect("Failed to create signing key");
         
-        let encryption1 = P2PEncryption::new_from_ed25519(&keypair1);
-        let encryption2 = P2PEncryption::new_from_ed25519(&keypair2);
+        let encryption1 = P2PEncryption::new_from_ed25519(&signing_key1);
+        let encryption2 = P2PEncryption::new_from_ed25519(&signing_key2);
         
         let peer_address = Address("test_peer".to_string());
         
@@ -285,8 +294,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_encryption_roundtrip() {
-        let encryption1 = P2PEncryption::new_from_ed25519(&Keypair::generate(&mut OsRng));
-        let encryption2 = P2PEncryption::new_from_ed25519(&Keypair::generate(&mut OsRng));
+        let mut rng = OsRng;
+        let mut secret_bytes1 = [0u8; 32];
+        let mut secret_bytes2 = [0u8; 32];
+        rng.fill_bytes(&mut secret_bytes1);
+        rng.fill_bytes(&mut secret_bytes2);
+        let signing_key1 = SigningKey::from_bytes(&secret_bytes1).expect("Failed to create signing key");
+        let signing_key2 = SigningKey::from_bytes(&secret_bytes2).expect("Failed to create signing key");
+        let encryption1 = P2PEncryption::new_from_ed25519(&signing_key1);
+        let encryption2 = P2PEncryption::new_from_ed25519(&signing_key2);
         
         let peer_address = Address("peer2".to_string());
         
@@ -310,11 +326,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_key_rotation() {
-        let encryption1 = P2PEncryption::new_from_ed25519(&Keypair::generate(&mut OsRng));
+        let mut rng = OsRng;
+        let mut secret_bytes1 = [0u8; 32];
+        let mut secret_bytes2 = [0u8; 32];
+        rng.fill_bytes(&mut secret_bytes1);
+        rng.fill_bytes(&mut secret_bytes2);
+        let signing_key1 = SigningKey::from_bytes(&secret_bytes1).expect("Failed to create signing key");
+        let signing_key2 = SigningKey::from_bytes(&secret_bytes2).expect("Failed to create signing key");
+        let encryption1 = P2PEncryption::new_from_ed25519(&signing_key1);
         let original_public_key = encryption1.get_local_public_key_bytes();
         
         // Create a new encryption instance to simulate key rotation
-        let encryption2 = P2PEncryption::new_from_ed25519(&Keypair::generate(&mut OsRng));
+        let encryption2 = P2PEncryption::new_from_ed25519(&signing_key2);
         let new_public_key = encryption2.get_local_public_key_bytes();
         
         assert_ne!(original_public_key, new_public_key);

@@ -1,9 +1,7 @@
 use clap::Parser;
-use ed25519_dalek::{Keypair, Signer};
+use libp2p_identity::Keypair;
 use reqwest::Client;
 use serde_json::json;
-
-use hex;
 
 #[derive(Parser)]
 #[command(name = "fund_accounts")]
@@ -25,14 +23,12 @@ async fn main() -> anyhow::Result<()> {
     println!("📡 Target node: {}", cli.node_url);
     println!("💵 Amount per account: {} USD", cli.amount);
 
-    // Faucet keypair (devnet - using a well-known seed) - RFC 8032 compliant
-    let faucet_seed = [0u8; 32]; // Faucet seed for devnet
-    let faucet_secret_key = ed25519_dalek::SecretKey::from_bytes(&faucet_seed).expect("32-byte seed");
-    let faucet_public_key = (&faucet_secret_key).into();
-    let faucet_keypair = Keypair { secret: faucet_secret_key, public: faucet_public_key };
+    // Faucet keypair (devnet - using a well-known seed)
+    let mut faucet_seed = [0u8; 32]; // Faucet seed for devnet
+    let faucet_keypair = Keypair::ed25519_from_bytes(&mut faucet_seed).expect("32-byte seed");
     
-    let faucet_address = compute_address(faucet_keypair.public.as_bytes());
-    println!("🔑 Faucet address: {}", faucet_address);
+    let faucet_address = compute_address(&faucet_keypair.public().encode_protobuf());
+    println!("🔑 Faucet address: {faucet_address}");
 
     // Test accounts to fund
     let test_accounts = vec![
@@ -43,18 +39,16 @@ async fn main() -> anyhow::Result<()> {
         "fdg1qedward1234567890",
     ];
 
-    // Bot account (same as transaction_bot uses) - RFC 8032 compliant
-    let bot_seed = [42u8; 32]; // Same seed as transaction_bot
-    let bot_secret_key = ed25519_dalek::SecretKey::from_bytes(&bot_seed).expect("32-byte seed");
-    let bot_public_key = (&bot_secret_key).into();
-    let bot_keypair = Keypair { secret: bot_secret_key, public: bot_public_key };
-    let bot_address = compute_address(bot_keypair.public.as_bytes());
+    // Bot account (same as transaction_bot uses)
+    let mut bot_seed = [42u8; 32]; // Same seed as transaction_bot
+    let bot_keypair = Keypair::ed25519_from_bytes(&mut bot_seed).expect("32-byte seed");
+    let bot_address = compute_address(&bot_keypair.public().encode_protobuf());
     
     // Verification output
     println!("VERIFICATION:");
     println!("Bot Seed: {:?}", &bot_seed);
-    println!("Bot Public Key: {}", hex::encode(bot_keypair.public.as_bytes()));
-    println!("Bot Address: {}", bot_address);
+    println!("Bot Public Key: {}", hex::encode(bot_keypair.public().encode_protobuf()));
+    println!("Bot Address: {bot_address}");
 
     let mut all_accounts = test_accounts.clone();
     all_accounts.push(&bot_address);
@@ -85,16 +79,16 @@ async fn main() -> anyhow::Result<()> {
             "from": faucet_address,
             "to": account,
             "amount": cli.amount,
-            "signature": signature.to_bytes().to_vec(),
+            "signature": signature.unwrap(),
             "payload": payload,
             "findag_time": findag_time,
             "hashtimer": hashtimer.to_vec(),
-            "public_key": faucet_keypair.public.to_bytes().to_vec(),
+            "public_key": faucet_keypair.public().encode_protobuf(),
             "shard_id": 0
         });
 
         // Send funding transaction
-        match client.post(&format!("{}/tx", cli.node_url))
+        match client.post(format!("{}/tx", cli.node_url))
             .json(&tx_request)
             .send()
             .await {
@@ -104,11 +98,11 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     let status = response.status();
                     let error_text = response.text().await.unwrap_or_default();
-                    println!("  ❌ Failed to fund {}: {} - {}", account, status, error_text);
+                    println!("  ❌ Failed to fund {account}: {status} - {error_text}");
                 }
             }
             Err(e) => {
-                println!("  ❌ Network error funding {}: {}", account, e);
+                println!("  ❌ Network error funding {account}: {e}");
             }
         }
 
@@ -124,6 +118,6 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn compute_address(pubkey: &[u8]) -> String {
-    let addr_hex = hex::encode(&pubkey[..8]); // Use first 8 bytes for shorter address (same as Address::from_public_key)
-    format!("fdg1q{}", addr_hex)
+    let addr_hex = hex::encode(&pubkey[..8]); // Use first 8 bytes for shorter address
+    format!("fdg1q{addr_hex}")
 } 

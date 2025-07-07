@@ -136,6 +136,7 @@ This document outlines the complete roadmap to bring FinDAG from its current dev
   - [x] Update API reference with new endpoints
   - [x] Clarify production readiness requirements
   - [x] Add operational configuration guidance
+- [x] **Document transaction bot and update PRD with latest transaction format** ✅ **COMPLETED**
 
 ---
 
@@ -312,10 +313,11 @@ This document outlines the complete roadmap to bring FinDAG from its current dev
 2. ✅ **Fix all compilation warnings** - COMPLETED ✅ 🎉
 3. ✅ **Implement RoundChain design** - COMPLETED ✅
 4. ✅ **Update all documentation** - COMPLETED ✅
-5. **Begin infrastructure deployment** (Docker, Kubernetes)
-6. **Start performance testing** and optimization
-7. **Complete security audit** process
-8. **Set up CI/CD pipeline** for automated testing
+5. ✅ **Document transaction bot and update PRD with latest transaction format** - COMPLETED ✅
+6. **Begin infrastructure deployment** (Docker, Kubernetes)
+7. **Start performance testing** and optimization
+8. **Complete security audit** process
+9. **Set up CI/CD pipeline** for automated testing
 
 ---
 

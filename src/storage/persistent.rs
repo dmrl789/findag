@@ -135,7 +135,7 @@ impl PersistentStorage {
 
     // Load an asset record
     pub fn load_asset(&self, asset_id: &str) -> Option<AssetRecord> {
-        let key = format!("asset:{}", asset_id);
+        let key = format!("asset:{asset_id}");
         self.db.get(key.as_bytes()).unwrap().map(|ivec| {
             bincode::deserialize(&ivec).unwrap()
         })
@@ -151,7 +151,7 @@ impl PersistentStorage {
 
     // Load a handle record
     pub fn load_handle(&self, handle: &str) -> Option<HandleRecord> {
-        let key = format!("handle:{}", handle);
+        let key = format!("handle:{handle}");
         self.db.get(key.as_bytes()).unwrap().map(|ivec| {
             bincode::deserialize(&ivec).unwrap()
         })

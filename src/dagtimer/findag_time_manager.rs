@@ -67,12 +67,12 @@ impl FinDAGTimeManager {
         let adjusted_micros = if clamped_offset >= 0 {
             local_micros + clamped_offset as u64
         } else {
-            local_micros.saturating_sub(clamped_offset.abs() as u64)
+            local_micros.saturating_sub(clamped_offset.unsigned_abs())
         };
 
         let seconds = adjusted_micros / 1_000_000;
         let remainder_micros = adjusted_micros % 1_000_000;
-        let slots_100ns = (remainder_micros * 10) as u64; // 1 µs = 10 × 100ns slots
+        let slots_100ns = remainder_micros * 10; // 1 µs = 10 × 100ns slots
 
         (seconds << 24) | (slots_100ns & 0xFFFFFF)
     }

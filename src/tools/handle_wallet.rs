@@ -1,5 +1,5 @@
 use chrono::Utc;
-use ed25519_dalek::{Keypair, Signer, PublicKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use std::fs;
 use clap::{Parser, Subcommand};
 use base64::engine::general_purpose::STANDARD;
@@ -10,6 +10,11 @@ use crate::core::handle_registry::{
     RevokeHandleInstruction,
     HandleRegistry
 };
+use std::path::PathBuf;
+use libp2p_identity::{Keypair, PublicKey};
+use serde::{Serialize, Deserialize};
+use hex;
+use crate::core::address::Address;
 
 #[derive(Parser)]
 #[command(name = "findag-handle-wallet")]
@@ -109,7 +114,7 @@ fn register_subhandle_cli(
     // 1. Load parent keypair
     let parent_key_bytes = fs::read(parent_keypair_path)
         .expect("Failed to read parent keypair file");
-    let parent_keypair = Keypair::from_bytes(&parent_key_bytes)
+    let parent_keypair = Keypair::ed25519_from_bytes(parent_key_bytes)
         .expect("Invalid parent keypair format");
 
     // 2. Load new pubkey
@@ -117,7 +122,7 @@ fn register_subhandle_cli(
         .expect("Failed to read new pubkey file");
     let new_pubkey = if new_pubkey_bytes.len() == 32 {
         // Raw bytes
-        PublicKey::from_bytes(&new_pubkey_bytes)
+        PublicKey::try_decode_protobuf(&new_pubkey_bytes)
             .expect("Invalid new pubkey bytes")
     } else {
         // Try base64
@@ -125,16 +130,16 @@ fn register_subhandle_cli(
             .expect("Invalid pubkey file encoding");
         let decoded = STANDARD.decode(pubkey_str.trim())
             .expect("Invalid base64 pubkey");
-        PublicKey::from_bytes(&decoded)
+        PublicKey::try_decode_protobuf(&decoded)
             .expect("Invalid pubkey bytes")
     };
-    let new_pubkey_b64 = STANDARD.encode(new_pubkey.to_bytes());
+    let new_pubkey_b64 = STANDARD.encode(new_pubkey.encode_protobuf());
 
     // 3. Compose handle
     let handle = if parent_handle.starts_with('@') {
         format!("@{}.{}", sub, parent_handle.trim_start_matches('@'))
     } else {
-        format!("@{}.{}", sub, parent_handle)
+        format!("@{sub}.{parent_handle}")
     };
 
     // 4. Parse metadata
@@ -157,12 +162,12 @@ fn register_subhandle_cli(
 
     // 7. Sign payload
     let payload = HandleRegistry::subhandle_payload_to_sign(&instr);
-    let sig = parent_keypair.sign(payload.as_bytes());
-    instr.parent_signature = STANDARD.encode(sig.to_bytes());
+    let sig = parent_keypair.sign(payload.as_bytes()).expect("Failed to sign payload");
+    instr.parent_signature = STANDARD.encode(sig);
 
     // 8. Output JSON
     let json = serde_json::to_string_pretty(&instr).unwrap();
-    println!("{}", json);
+    println!("{json}");
 }
 
 fn rotate_key_cli(
@@ -173,24 +178,24 @@ fn rotate_key_cli(
     // 1. Load current keypair
     let current_key_bytes = fs::read(current_keypair_path)
         .expect("Failed to read current keypair file");
-    let current_keypair = Keypair::from_bytes(&current_key_bytes)
+    let current_keypair = Keypair::ed25519_from_bytes(current_key_bytes)
         .expect("Invalid current keypair format");
 
     // 2. Load new pubkey
     let new_pubkey_bytes = fs::read(new_pubkey_path)
         .expect("Failed to read new pubkey file");
     let new_pubkey = if new_pubkey_bytes.len() == 32 {
-        PublicKey::from_bytes(&new_pubkey_bytes)
+        PublicKey::try_decode_protobuf(&new_pubkey_bytes)
             .expect("Invalid new pubkey bytes")
     } else {
         let pubkey_str = String::from_utf8(new_pubkey_bytes)
             .expect("Invalid pubkey file encoding");
         let decoded = STANDARD.decode(pubkey_str.trim())
             .expect("Invalid base64 pubkey");
-        PublicKey::from_bytes(&decoded)
+        PublicKey::try_decode_protobuf(&decoded)
             .expect("Invalid pubkey bytes")
     };
-    let new_pubkey_b64 = STANDARD.encode(new_pubkey.to_bytes());
+    let new_pubkey_b64 = STANDARD.encode(new_pubkey.encode_protobuf());
 
     // 3. Timestamp
     let timestamp = Utc::now().to_rfc3339();
@@ -205,12 +210,12 @@ fn rotate_key_cli(
 
     // 5. Sign payload
     let payload = HandleRegistry::rotate_key_payload_to_sign(&instr);
-    let sig = current_keypair.sign(payload.as_bytes());
-    instr.signature = STANDARD.encode(sig.to_bytes());
+    let sig = current_keypair.sign(payload.as_bytes()).expect("Failed to sign payload");
+    instr.signature = STANDARD.encode(sig);
 
     // 6. Output JSON
     let json = serde_json::to_string_pretty(&instr).unwrap();
-    println!("{}", json);
+    println!("{json}");
 }
 
 fn revoke_handle_cli(
@@ -221,7 +226,7 @@ fn revoke_handle_cli(
     // 1. Load parent keypair
     let parent_key_bytes = fs::read(parent_keypair_path)
         .expect("Failed to read parent keypair file");
-    let parent_keypair = Keypair::from_bytes(&parent_key_bytes)
+    let parent_keypair = Keypair::ed25519_from_bytes(parent_key_bytes)
         .expect("Invalid parent keypair format");
 
     // 2. Timestamp
@@ -237,22 +242,22 @@ fn revoke_handle_cli(
 
     // 4. Sign payload
     let payload = HandleRegistry::revoke_handle_payload_to_sign(&instr);
-    let sig = parent_keypair.sign(payload.as_bytes());
-    instr.parent_signature = STANDARD.encode(sig.to_bytes());
+    let sig = parent_keypair.sign(payload.as_bytes()).expect("Failed to sign payload");
+    instr.parent_signature = STANDARD.encode(sig);
 
     // 5. Output JSON
     let json = serde_json::to_string_pretty(&instr).unwrap();
-    println!("{}", json);
+    println!("{json}");
 }
 
 fn resolve_handle_cli(handle: &str) {
     // This would typically query a node's handle registry
     // For now, just show the handle format
-    println!("Resolving handle: {}", handle);
+    println!("Resolving handle: {handle}");
     println!("(This would query the network for handle information)");
     println!("Example output:");
     println!("{{");
-    println!("  \"handle\": \"{}\"", handle);
+    println!("  \"handle\": \"{handle}\"");
     println!("  \"parent\": \"@parent.fd\"");
     println!("  \"public_key\": \"base64-pubkey\"");
     println!("  \"metadata\": {{ \"role\": \"trading desk\" }}");
@@ -263,7 +268,7 @@ fn resolve_handle_cli(handle: &str) {
 
 fn list_children_cli(parent: &str) {
     // This would typically query a node's handle registry
-    println!("Children of handle: {}", parent);
+    println!("Children of handle: {parent}");
     println!("(This would query the network for child handles)");
     println!("Example output:");
     println!("[");
@@ -274,16 +279,11 @@ fn list_children_cli(parent: &str) {
 
 // Utility function to generate a new keypair and save to file
 pub fn generate_keypair(output_path: &str) -> Result<(), String> {
-    let keypair = Keypair::generate(&mut rand::rngs::OsRng);
-    let keypair_bytes = keypair.to_bytes();
-    
+    let keypair = Keypair::generate_ed25519();
+    let keypair_bytes = keypair.to_protobuf_encoding().map_err(|e| format!("Failed to encode keypair: {}", e))?;
     fs::write(output_path, keypair_bytes)
         .map_err(|e| format!("Failed to write keypair: {}", e))?;
-    
-    println!("Generated new keypair: {}", output_path);
-    println!("Public key (base64): {}", STANDARD.encode(keypair.public.to_bytes()));
-    println!("Public key (hex): {}", hex::encode(keypair.public.to_bytes()));
-    
+    println!("Generated keypair saved to: {}", output_path);
     Ok(())
 }
 
@@ -291,11 +291,9 @@ pub fn generate_keypair(output_path: &str) -> Result<(), String> {
 pub fn extract_pubkey(keypair_path: &str) -> Result<PublicKey, String> {
     let keypair_bytes = fs::read(keypair_path)
         .map_err(|e| format!("Failed to read keypair file: {}", e))?;
-    
-    let keypair = Keypair::from_bytes(&keypair_bytes)
+    let keypair = Keypair::ed25519_from_bytes(keypair_bytes)
         .map_err(|e| format!("Invalid keypair format: {}", e))?;
-    
-    Ok(keypair.public)
+    Ok(keypair.public())
 }
 
 #[cfg(test)]

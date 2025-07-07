@@ -54,7 +54,7 @@ fn analyze_transaction(raw_json: &str) -> TransactionAnalysis {
     let json_value: Value = match serde_json::from_str(raw_json) {
         Ok(v) => v,
         Err(e) => {
-            analysis.validation_errors.push(format!("JSON parse error: {}", e));
+            analysis.validation_errors.push(format!("JSON parse error: {e}"));
             return analysis;
         }
     };
@@ -111,13 +111,13 @@ fn analyze_transaction(raw_json: &str) -> TransactionAnalysis {
     // Validate addresses
     if let Some(from) = analysis.parsed_fields.get("from") {
         if !from.starts_with("fdg1q") {
-            analysis.validation_errors.push(format!("Invalid from address format: {}", from));
+            analysis.validation_errors.push(format!("Invalid from address format: {from}"));
         }
     }
     
     if let Some(to) = analysis.parsed_fields.get("to") {
         if !to.starts_with("fdg1q") {
-            analysis.validation_errors.push(format!("Invalid to address format: {}", to));
+            analysis.validation_errors.push(format!("Invalid to address format: {to}"));
         }
     }
     
@@ -130,7 +130,7 @@ fn print_analysis(analysis: &TransactionAnalysis) {
     
     println!("📄 Parsed Fields:");
     for (key, value) in &analysis.parsed_fields {
-        println!("  {}: {}", key, value);
+        println!("  {key}: {value}");
     }
     
     println!("\n🔐 Signature Analysis:");
@@ -142,7 +142,7 @@ fn print_analysis(analysis: &TransactionAnalysis) {
     if !analysis.validation_errors.is_empty() {
         println!("\n❌ Validation Errors:");
         for error in &analysis.validation_errors {
-            println!("  - {}", error);
+            println!("  - {error}");
         }
     } else {
         println!("\n✅ No validation errors found");

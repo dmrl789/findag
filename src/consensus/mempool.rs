@@ -9,6 +9,12 @@ pub struct Mempool {
     queue: Mutex<VecDeque<Transaction>>,
 }
 
+impl Default for Mempool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mempool {
     pub fn new() -> Self {
         Self {

@@ -1,13 +1,12 @@
 use clap::{Parser, Subcommand};
-use reqwest;
 use std::time::Duration;
 use tokio::time::sleep;
-use ed25519_dalek::{Keypair, Signer};
+use libp2p_identity::Keypair;
 use findag::core::types::Transaction;
 use findag::core::address::Address;
 use reqwest::Client;
 use serde_json::json;
-use hex;
+use ed25519_dalek::{Signature, VerifyingKey};
 
 #[derive(Parser)]
 #[command(name = "transaction_bot")]
@@ -37,19 +36,21 @@ struct TransactionBot {
 
 impl TransactionBot {
     fn new(node_url: String, interval_ms: u64) -> Self {
-        // Use deterministic keypair generation (RFC 8032 compliant)
-        let bot_seed = [42u8; 32]; // Fixed seed for deterministic behavior
+        // Use deterministic keypair generation
+        let mut bot_seed = [42u8; 32]; // Fixed seed for deterministic behavior
         
-        // Method A: RFC-compliant deterministic keypair from seed
-        let secret_key = ed25519_dalek::SecretKey::from_bytes(&bot_seed).expect("32-byte seed");
-        let public_key = (&secret_key).into();
-        let keypair = Keypair { secret: secret_key, public: public_key };
+        // Generate keypair using libp2p_identity
+        let keypair = Keypair::ed25519_from_bytes(&mut bot_seed).expect("32-byte seed");
+        
+        // Convert to ed25519_dalek types for address generation
+        let public_key_bytes = keypair.public().encode_protobuf();
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes[..32].try_into().unwrap()).unwrap();
         
         // Verification output
         println!("VERIFICATION:");
         println!("Seed: {:?}", &bot_seed);
-        println!("Public Key: {}", hex::encode(keypair.public.as_bytes()));
-        println!("Address: {}", Address::from_public_key(&keypair.public));
+        println!("Public Key: {}", hex::encode(keypair.public().encode_protobuf()));
+        println!("Address: {}", Address::from_verifying_key(&verifying_key));
         
         Self {
             client: Client::new(),
@@ -60,12 +61,14 @@ impl TransactionBot {
     }
     
     fn get_from_address(&self) -> Address {
-        Address::from_public_key(&self.keypair.public)
+        let public_key_bytes = self.keypair.public().encode_protobuf();
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes[..32].try_into().unwrap()).unwrap();
+        Address::from_verifying_key(&verifying_key)
     }
     
     async fn send_transaction(&self, from: &Address, to: &Address, amount: u64) -> Result<(), Box<dyn std::error::Error>> {
         // Create a simple transaction payload
-        let payload = format!("Transfer {} USD from {} to {}", amount, from, to).into_bytes();
+        let payload = format!("Transfer {amount} USD from {from} to {to}").into_bytes();
         
         // Get current FinDAG time (use system time for now)
         let findag_time = std::time::SystemTime::now()
@@ -81,9 +84,16 @@ impl TransactionBot {
         // The API expects: format!("{}{}{}", signed_tx.from, signed_tx.to, signed_tx.amount)
         // where from, to are strings, not Address objects
         let message = format!("{}{}{}", from.as_str(), to.as_str(), amount);
-        let signature = self.keypair.sign(message.as_bytes());
+        let signature_bytes = self.keypair.sign(message.as_bytes()).unwrap();
         
-        println!("[Bot-01] Sending transaction: from={}, to={}, amount={}", from, to, amount);
+        // Convert to ed25519::Signature
+        let signature = Signature::from_bytes(&signature_bytes.clone().try_into().unwrap());
+        
+        // Convert public key
+        let public_key_bytes = self.keypair.public().encode_protobuf();
+        let public_key = VerifyingKey::from_bytes(&public_key_bytes[..32].try_into().unwrap()).unwrap();
+        
+        println!("[Bot-01] Sending transaction: from={from}, to={to}, amount={amount}");
         
         let _tx = Transaction {
             from: from.clone(),
@@ -93,7 +103,7 @@ impl TransactionBot {
             findag_time,
             hashtimer,
             signature,
-            public_key: self.keypair.public.clone(),
+            public_key,
             shard_id: findag::core::types::ShardId(0),
             source_shard: None,
             dest_shard: None,
@@ -106,16 +116,16 @@ impl TransactionBot {
             "from": from.as_str(),
             "to": to.as_str(),
             "amount": amount,
-            "signature": signature.to_bytes().to_vec(),
+            "signature": signature_bytes,
             "payload": payload,
             "findag_time": findag_time,
             "hashtimer": hashtimer.to_vec(),
-            "public_key": self.keypair.public.to_bytes().to_vec(),
+            "public_key": public_key_bytes[..32].to_vec(),
             "shard_id": 0
         });
         
         let response = self.client
-            .post(&format!("{}/tx", self.node_url))
+            .post(format!("{}/tx", self.node_url))
             .json(&request_payload)
             .send()
             .await?;
@@ -167,8 +177,7 @@ impl TransactionBot {
                     let elapsed = start_time.elapsed().as_secs_f64();
                     let tps = transaction_count as f64 / elapsed;
                     let success_rate = (successful_count as f64 / transaction_count as f64) * 100.0;
-                    println!("[Bot-01] Stats: {} sent, {} successful, {} failed, {:.2} TPS, {:.1}% success rate", 
-                        transaction_count, successful_count, failed_count, tps, success_rate);
+                    println!("[Bot-01] Stats: {transaction_count} sent, {successful_count} successful, {failed_count} failed, {tps:.2} TPS, {success_rate:.1}% success rate");
                 }
                 
                 sleep(Duration::from_millis(self.interval_ms)).await;
@@ -184,8 +193,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Commands::Start { node_url, interval_ms } => {
             println!("🤖 Starting transaction bot 01");
-            println!("📡 Target: {}", node_url);
-            println!("⏱️  Interval: {}ms", interval_ms);
+            println!("📡 Target: {node_url}");
+            println!("⏱️  Interval: {interval_ms}ms");
             
             let bot = TransactionBot::new(node_url, interval_ms);
             bot.run().await?;

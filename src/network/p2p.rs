@@ -34,9 +34,9 @@ pub async fn start(
     port: u16,
     _tx_pool: Arc<ShardedTxPool>,
 ) -> std::io::Result<()> {
-    let addr = format!("0.0.0.0:{}", port);
+    let addr = format!("0.0.0.0:{port}");
     let socket = UdpSocket::bind(&addr).await?;
-    println!("P2P network listening on {}", addr);
+    println!("P2P network listening on {addr}");
     
     let mut buf = [0; 1024];
     loop {

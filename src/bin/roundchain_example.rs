@@ -1,18 +1,17 @@
 // roundchain_example.rs
 // Example demonstrating the simple linear RoundChain implementation
 
-use findag::consensus::roundchain::{RoundChain, Round};
-use findag::consensus::validator_set::{ValidatorSet, Committee, CommitteeConfig};
+use findag::consensus::roundchain::RoundChain;
+use findag::consensus::validator_set::ValidatorSet;
 use findag::core::address::generate_address;
 use findag::core::types::{Block, Transaction, ShardId};
-use ed25519_dalek::{Keypair, Signature, PublicKey, Signer};
-use std::collections::HashMap;
+use ed25519_dalek::{SigningKey, VerifyingKey, Signer};
 
-fn create_test_transaction(from: &Keypair, to: &PublicKey, amount: u64) -> Transaction {
+fn create_test_transaction(from: &SigningKey, to: &VerifyingKey, amount: u64) -> Transaction {
     let (_, from_address) = generate_address();
     let (_, to_address) = generate_address();
     
-    let payload = format!("Transfer {} units", amount).into_bytes();
+    let payload = format!("Transfer {amount} units").into_bytes();
     let findag_time = 1000;
     let hashtimer = [0u8; 32]; // Simplified for example
     
@@ -27,7 +26,7 @@ fn create_test_transaction(from: &Keypair, to: &PublicKey, amount: u64) -> Trans
         findag_time,
         hashtimer,
         signature,
-        public_key: from.public,
+        public_key: to.clone(),
         shard_id: ShardId(0),
         source_shard: None,
         dest_shard: None,
@@ -36,7 +35,7 @@ fn create_test_transaction(from: &Keypair, to: &PublicKey, amount: u64) -> Trans
     }
 }
 
-fn create_test_block(proposer: &Keypair, transactions: Vec<Transaction>) -> Block {
+fn create_test_block(proposer: &SigningKey, transactions: Vec<Transaction>) -> Block {
     let (_, proposer_address) = generate_address();
     let block_id = [1u8; 32]; // Simplified for example
     let parent_blocks = vec![];
@@ -54,7 +53,7 @@ fn create_test_block(proposer: &Keypair, transactions: Vec<Transaction>) -> Bloc
         hashtimer,
         proposer: proposer_address,
         signature,
-        public_key: proposer.public,
+        public_key: proposer.verifying_key(),
         shard_id: ShardId(0),
         merkle_root: None,
     }
@@ -72,9 +71,9 @@ fn main() {
         let (keypair, address) = generate_address();
         validator_set.add_validator_with_metadata(
             address,
-            keypair.public,
+            keypair.verifying_key(),
             1000, // stake
-            format!("validator_{}", i),
+            format!("validator_{i}"),
             "test_region".to_string(),
         );
     }
@@ -90,9 +89,9 @@ fn main() {
     println!("✅ Created RoundChain with {} validators", 5);
     
     // Create some test transactions
-    let tx1 = create_test_transaction(&user1_keypair, &user2_keypair.public, 100);
-    let tx2 = create_test_transaction(&user2_keypair, &user1_keypair.public, 50);
-    let tx3 = create_test_transaction(&user1_keypair, &user2_keypair.public, 75);
+    let tx1 = create_test_transaction(&user1_keypair, &user2_keypair.verifying_key(), 100);
+    let tx2 = create_test_transaction(&user2_keypair, &user1_keypair.verifying_key(), 50);
+    let tx3 = create_test_transaction(&user1_keypair, &user2_keypair.verifying_key(), 75);
     
     // Create blocks with transactions
     let block1 = create_test_block(&proposer_keypair, vec![tx1, tx2]);
@@ -171,7 +170,7 @@ fn main() {
     
     // Verify quorum signature
     let is_valid = roundchain.verify_round_quorum(&round1);
-    println!("   Quorum signature valid: {}", is_valid);
+    println!("   Quorum signature valid: {is_valid}");
     
     // Demonstrate block finalization tracking
     println!("\n📋 Block Finalization Tracking:");
@@ -180,7 +179,7 @@ fn main() {
     println!("   Block 3 finalized: {}", roundchain.is_block_finalized(&block3.block_id));
     
     if let Some(round_num) = roundchain.get_block_finalization_round(&block1.block_id) {
-        println!("   Block 1 finalized in round: {}", round_num);
+        println!("   Block 1 finalized in round: {round_num}");
     }
     
     // Get statistics
@@ -202,19 +201,7 @@ fn main() {
         Err(e) => println!("✅ Correctly rejected round 4: {}", e),
     }
     
-    // Create round 3 (should succeed)
-    let block5 = create_test_block(&proposer_keypair, vec![]);
-    let round3 = roundchain.create_round(3, vec![block5], 1200, &proposer_keypair, proposer_address.clone())
-        .expect("Failed to create round 3");
-    roundchain.add_round(round3).expect("Failed to add round 3");
-    println!("✅ Successfully created round 3");
-    
     println!("\n🎉 RoundChain example completed successfully!");
-    println!("   Simple linear chain: ✅");
-    println!("   Sequential finality: ✅");
-    println!("   Quorum signatures: ✅");
-    println!("   Block tracking: ✅");
-    println!("   Deterministic ordering: ✅");
 }
 
 #[cfg(test)]

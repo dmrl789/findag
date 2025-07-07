@@ -70,7 +70,7 @@ impl PingPong {
         record_fn: fn(&T, i64, u64),
     ) {
         loop {
-            let interval = 4.0 + StdRng::from_rng(OsRng).unwrap().gen_range(-0.5, 0.5);
+            let interval = 4.0 + StdRng::from_rng(OsRng).unwrap().gen_range(-0.5..0.5);
             sleep(Duration::from_secs_f64(interval)).await;
             if let Ok(Some((rtt, offset))) = self.ping_peer(&peer_addr).await {
                 // Feed to FinDAGTimeManager using provided function pointer

@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use findag::core::wallet::{Wallet, WalletManager, prompt_password, prompt_password_confirm};
 use serde::{Serialize, Deserialize};
-use reqwest;
+use hex;
 
 #[derive(Parser)]
 #[command(name = "FinDAG Encrypted Wallet")]
@@ -68,7 +68,7 @@ struct ApiTransaction {
 }
 
 async fn fetch_asset_whitelist(node_url: &str) -> Vec<String> {
-    let url = format!("{}/assets", node_url);
+    let url = format!("{node_url}/assets");
     match reqwest::get(&url).await {
         Ok(resp) => match resp.json::<serde_json::Value>().await {
             Ok(json) => json["assets"].as_array().map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()).unwrap_or_default(),
@@ -89,7 +89,7 @@ async fn main() {
             let password = match prompt_password_confirm() {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -103,7 +103,7 @@ async fn main() {
                     println!("\n⚠️  IMPORTANT: Keep your password safe! If you lose it, you cannot recover your wallet.");
                 }
                 Err(e) => {
-                    eprintln!("Error creating wallet: {}", e);
+                    eprintln!("Error creating wallet: {e}");
                 }
             }
         }
@@ -117,7 +117,7 @@ async fn main() {
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -128,7 +128,7 @@ async fn main() {
                     println!("Address: {}", wallet.address().as_str());
                 }
                 Err(e) => {
-                    eprintln!("Error unlocking wallet: {}", e);
+                    eprintln!("Error unlocking wallet: {e}");
                 }
             }
         }
@@ -142,7 +142,7 @@ async fn main() {
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -154,15 +154,14 @@ async fn main() {
                     println!("Public Key: {}", wallet.public_key_hex());
                     println!("Accounts: {}", wallet.accounts().len());
                     for account in wallet.accounts() {
-                        println!("  - {}: {} {}", 
+                        println!("  - {}: {}", 
                             account.name, 
-                            account.address,
-                            if account.is_default { "(default)" } else { "" }
+                            account.address
                         );
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error loading wallet: {}", e);
+                    eprintln!("Error loading wallet: {e}");
                 }
             }
         }
@@ -176,7 +175,7 @@ async fn main() {
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -186,7 +185,7 @@ async fn main() {
                     println!("{}", wallet.address().as_str());
                 }
                 Err(e) => {
-                    eprintln!("Error loading wallet: {}", e);
+                    eprintln!("Error loading wallet: {e}");
                 }
             }
         }
@@ -200,7 +199,7 @@ async fn main() {
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -208,14 +207,14 @@ async fn main() {
             let wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("Error loading wallet: {}", e);
+                    eprintln!("Error loading wallet: {e}");
                     return;
                 }
             };
             
             let whitelist = fetch_asset_whitelist(&cli.node_url).await;
             if !whitelist.contains(&currency.to_string()) {
-                println!("Error: '{}' is not a supported asset.", currency);
+                println!("Error: '{currency}' is not a supported asset.");
                 return;
             }
             
@@ -246,7 +245,7 @@ async fn main() {
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -254,14 +253,14 @@ async fn main() {
             let wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("Error loading wallet: {}", e);
+                    eprintln!("Error loading wallet: {e}");
                     return;
                 }
             };
             
             let whitelist = fetch_asset_whitelist(&cli.node_url).await;
             if !whitelist.contains(&currency.to_string()) {
-                println!("Error: '{}' is not a supported asset.", currency);
+                println!("Error: '{currency}' is not a supported asset.");
                 return;
             }
             
@@ -284,7 +283,7 @@ async fn main() {
                     match resp.json::<serde_json::Value>().await {
                         Ok(json) => {
                             println!("✅ Transaction sent successfully!");
-                            println!("Response: {}", json);
+                            println!("Response: {json}");
                         }
                         Err(_) => {
                             eprintln!("Error: Invalid response from node");
@@ -306,7 +305,7 @@ async fn main() {
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -314,7 +313,7 @@ async fn main() {
             let wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("Error loading wallet: {}", e);
+                    eprintln!("Error loading wallet: {e}");
                     return;
                 }
             };
@@ -332,7 +331,7 @@ async fn main() {
             let wallet = match Wallet::from_private_key_hex(private_key) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("Error importing private key: {}", e);
+                    eprintln!("Error importing private key: {e}");
                     return;
                 }
             };
@@ -340,7 +339,7 @@ async fn main() {
             let password = match prompt_password_confirm() {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -352,7 +351,7 @@ async fn main() {
                     println!("Public Key: {}", wallet.public_key_hex());
                 }
                 Err(e) => {
-                    eprintln!("Error saving wallet: {}", e);
+                    eprintln!("Error saving wallet: {e}");
                 }
             }
         }
@@ -366,7 +365,7 @@ async fn main() {
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -374,7 +373,7 @@ async fn main() {
             let mut wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("Error loading wallet: {}", e);
+                    eprintln!("Error loading wallet: {e}");
                     return;
                 }
             };
@@ -383,18 +382,18 @@ async fn main() {
                 Ok(_) => {
                     // Save the updated wallet
                     if let Err(e) = wallet_manager.save_wallet(&wallet, &password) {
-                        eprintln!("Error saving wallet: {}", e);
+                        eprintln!("Error saving wallet: {e}");
                         return;
                     }
                     
-                    println!("✅ Account '{}' added successfully!", name);
+                    println!("✅ Account '{name}' added successfully!");
                     if let Some(account) = wallet.accounts().last() {
                         println!("Address: {}", account.address);
-                        println!("Public Key: {}", account.public_key);
+                        println!("Public Key: {}", hex::encode(account.signing_key.verifying_key().to_bytes()));
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error adding account: {}", e);
+                    eprintln!("Error adding account: {e}");
                 }
             }
         }
@@ -408,7 +407,7 @@ async fn main() {
             let password = match prompt_password("Enter wallet password") {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -416,18 +415,17 @@ async fn main() {
             let wallet = match wallet_manager.load_wallet(&password) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("Error loading wallet: {}", e);
+                    eprintln!("Error loading wallet: {e}");
                     return;
                 }
             };
             
             println!("=== Wallet Accounts ===");
             for (i, account) in wallet.accounts().iter().enumerate() {
-                println!("{}. {}: {} {}", 
+                println!("{}. {}: {}", 
                     i + 1,
                     account.name, 
-                    account.address,
-                    if account.is_default { "(default)" } else { "" }
+                    account.address
                 );
             }
         }
@@ -441,7 +439,7 @@ async fn main() {
             let old_password = match prompt_password("Enter current password") {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -449,7 +447,7 @@ async fn main() {
             let wallet = match wallet_manager.load_wallet(&old_password) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("Error loading wallet: {}", e);
+                    eprintln!("Error loading wallet: {e}");
                     return;
                 }
             };
@@ -457,7 +455,7 @@ async fn main() {
             let new_password = match prompt_password_confirm() {
                 Ok(pwd) => pwd,
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     return;
                 }
             };
@@ -467,7 +465,7 @@ async fn main() {
                     println!("✅ Password changed successfully!");
                 }
                 Err(e) => {
-                    eprintln!("Error saving wallet: {}", e);
+                    eprintln!("Error saving wallet: {e}");
                 }
             }
         }

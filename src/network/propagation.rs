@@ -134,7 +134,7 @@ impl NetworkPropagator {
                                         }
                                     }
                                 } else {
-                                    println!("⚠️ Received encrypted message from unknown peer: {}", peer_socket);
+                                    println!("⚠️ Received encrypted message from unknown peer: {peer_socket}");
                                 }
                             } else {
                                 println!("⚠️ Received encrypted message but encryption is disabled");

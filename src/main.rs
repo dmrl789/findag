@@ -6,7 +6,7 @@ use axum::{
     debug_handler,
 };
 use tokio::sync::Mutex;
-use ed25519_dalek::Verifier;
+use ed25519_dalek::{Verifier, VerifyingKey, Signature};
 use serde::{Serialize, Deserialize};
 use clap::Parser;
 
@@ -102,7 +102,7 @@ async fn node_info(State(state): State<AppState>) -> Json<serde_json::Value> {
 #[debug_handler]
 #[allow(dead_code)]
 async fn submit_transaction(State(state): State<AppState>, Json(req): Json<TransactionRequest>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    println!("[DEBUG] HTTP API: Received transaction request: {:?}", req);
+    println!("[DEBUG] HTTP API: Received transaction request: {req:?}");
     
     // Validate the transaction
     let from_address = Address(req.from.clone());
@@ -110,21 +110,36 @@ async fn submit_transaction(State(state): State<AppState>, Json(req): Json<Trans
     
     // Verify signature
     let message = format!("{}{}{}", req.from, req.to, req.amount);
-    println!("[DEBUG] HTTP API: Verifying signature for message: '{}'", message);
-    let signature = match ed25519_dalek::Signature::from_bytes(&req.signature) {
-        Ok(sig) => sig,
-        Err(e) => {
-            println!("[DEBUG] HTTP API: Invalid signature format: {:?}", e);
+    println!("[DEBUG] HTTP API: Verifying signature for message: '{message}'");
+    
+    // Convert Vec<u8> to [u8; 64] for signature
+    let signature_bytes: [u8; 64] = match req.signature.clone().try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            println!("[DEBUG] HTTP API: Invalid signature length: expected 64 bytes, got {}", req.signature.len());
             return Err((StatusCode::BAD_REQUEST, Json(json!({
-                "error": "Invalid signature format"
+                "error": "Invalid signature length"
             }))));
         }
     };
     
-    let public_key = match ed25519_dalek::PublicKey::from_bytes(&req.public_key) {
+    let signature = Signature::from_bytes(&signature_bytes);
+    
+    // Convert Vec<u8> to [u8; 32] for public key
+    let public_key_bytes: [u8; 32] = match req.public_key.clone().try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            println!("[DEBUG] HTTP API: Invalid public key length: expected 32 bytes, got {}", req.public_key.len());
+            return Err((StatusCode::BAD_REQUEST, Json(json!({
+                "error": "Invalid public key length"
+            }))));
+        }
+    };
+    
+    let public_key = match VerifyingKey::from_bytes(&public_key_bytes) {
         Ok(pk) => pk,
         Err(e) => {
-            println!("[DEBUG] HTTP API: Invalid public key format: {:?}", e);
+            println!("[DEBUG] HTTP API: Invalid public key format: {e:?}");
             return Err((StatusCode::BAD_REQUEST, Json(json!({
                 "error": "Invalid public key format"
             }))));
@@ -134,7 +149,7 @@ async fn submit_transaction(State(state): State<AppState>, Json(req): Json<Trans
     match public_key.verify(message.as_bytes(), &signature) {
         Ok(_) => println!("[DEBUG] HTTP API: Signature verification passed"),
         Err(e) => {
-            println!("[DEBUG] HTTP API: Signature verification failed: {:?}", e);
+            println!("[DEBUG] HTTP API: Signature verification failed: {e:?}");
             return Err((StatusCode::BAD_REQUEST, Json(json!({
                 "error": "Signature verification failed"
             }))));
@@ -157,7 +172,7 @@ async fn submit_transaction(State(state): State<AppState>, Json(req): Json<Trans
             }
             ht
         },
-        public_key: public_key.clone(),
+        public_key,
         shard_id: ShardId(req.shard_id),
         signature,
         source_shard: None,
@@ -213,7 +228,7 @@ async fn get_hashtimer_status(State(state): State<AppState>) -> Json<serde_json:
     Json(json!({
         "current_round": current_round,
         "current_findag_time": current_time,
-        "hashtimer_hash": format!("0x{}", hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+        "hashtimer_hash": format!("0x{}", hashtimer.iter().map(|b| format!("{b:02x}")).collect::<String>()),
         "timestamp": chrono::Utc::now().to_rfc3339(),
     }))
 }
@@ -239,7 +254,7 @@ async fn get_mempool_transactions(State(state): State<AppState>) -> Json<serde_j
             "to": tx.to.as_str(),
             "amount": tx.amount,
             "findag_time": tx.findag_time,
-            "hashtimer": format!("0x{}", tx.hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+            "hashtimer": format!("0x{}", tx.hashtimer.iter().map(|b| format!("{b:02x}")).collect::<String>()),
             "shard_id": tx.shard_id.0,
         })
     }).collect();
@@ -262,12 +277,12 @@ async fn get_recent_transactions(State(state): State<AppState>) -> Json<serde_js
     for block in &recent_blocks {
         for tx in &block.transactions {
             all_transactions.push(json!({
-                "block_hash": format!("0x{}", block.hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+                "block_hash": format!("0x{}", block.hashtimer.iter().map(|b| format!("{b:02x}")).collect::<String>()),
                 "from": tx.from.0,
                 "to": tx.to.0,
                 "amount": tx.amount,
                 "findag_time": tx.findag_time,
-                "hashtimer": format!("0x{}", tx.hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+                "hashtimer": format!("0x{}", tx.hashtimer.iter().map(|b| format!("{b:02x}")).collect::<String>()),
                 "shard_id": tx.shard_id.0,
             }));
         }
@@ -293,7 +308,7 @@ async fn get_simple_transactions(State(state): State<AppState>) -> Json<serde_js
             "to": tx.to.as_str(),
             "amount": tx.amount,
             "findag_time": tx.findag_time,
-            "hashtimer": format!("0x{}", tx.hashtimer.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+            "hashtimer": format!("0x{}", tx.hashtimer.iter().map(|b| format!("{b:02x}")).collect::<String>()),
             "status": "pending"
         })
     }).collect();
@@ -384,13 +399,13 @@ async fn main() {
 
     // Start HTTP server
     if let Err(e) = findag::api::http_server::start(args.port, tx_pool.clone()).await {
-        eprintln!("Failed to start HTTP server: {}", e);
+        eprintln!("Failed to start HTTP server: {e}");
         return;
     }
 
     // Start P2P network
     if let Err(e) = findag::network::p2p::start(args.p2p_port, tx_pool).await {
-        eprintln!("Failed to start P2P network: {}", e);
+        eprintln!("Failed to start P2P network: {e}");
         return;
     }
     

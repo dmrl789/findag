@@ -2,7 +2,7 @@ use axum::{routing::{get, post, delete}, extract::{Path, Query}, Json, Router};
 use serde::{Deserialize, Serialize};
 use crate::consensus::validator_set::{ValidatorSet, ValidatorStatus};
 use crate::core::address::Address;
-use ed25519_dalek::{PublicKey, Signer, Keypair};
+use ed25519_dalek::{VerifyingKey, Signer, SigningKey};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 // Removed unused import: GovernanceState
@@ -18,6 +18,7 @@ use axum::http::{StatusCode, HeaderMap};
 use crate::core::tx_pool::ShardedTxPool;
 use crate::network::propagation::NetworkPropagator;
 use rand;
+use rand_core::RngCore;
 use axum::response::IntoResponse;
 use axum::extract::State;
 use std::env;
@@ -317,37 +318,33 @@ async fn post_tx(
         
         // Validate signature
         let message = format!("{}{}{}", signed_tx.from, signed_tx.to, signed_tx.amount);
-        println!("[DEBUG] Verifying signature for message: '{}'", message);
+        println!("[DEBUG] Verifying signature for message: '{message}'");
         println!("[DEBUG] Public key length: {}, Signature length: {}", 
                 signed_tx.public_key.len(), signed_tx.signature.len());
         
-        let public_key = match ed25519_dalek::PublicKey::from_bytes(&signed_tx.public_key) {
+        let public_key = match ed25519_dalek::VerifyingKey::from_bytes(&signed_tx.public_key.clone().try_into().unwrap()) {
             Ok(pk) => {
                 println!("[DEBUG] Public key parsed successfully");
                 pk
             },
             Err(e) => {
-                println!("[DEBUG] Invalid public key format: {:?}", e);
+                println!("[DEBUG] Invalid public key format: {e:?}");
                 return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid public key format" }))));
             }
         };
         
-        let signature = match ed25519_dalek::Signature::from_bytes(&signed_tx.signature) {
-            Ok(sig) => {
-                println!("[DEBUG] Signature parsed successfully");
-                sig
-            },
-            Err(e) => {
-                println!("[DEBUG] Invalid signature format: {:?}", e);
-                return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Invalid signature format" }))));
-            }
-        };
+        let signature_bytes: [u8; 64] = signed_tx.signature.clone().try_into().map_err(|_| {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": "Invalid signature length"
+            })))
+        })?;
+        let signature = ed25519_dalek::Signature::from_bytes(&signature_bytes);
         
         // Verify signature
         match public_key.verify(message.as_bytes(), &signature) {
             Ok(_) => println!("[DEBUG] Signature verification successful"),
             Err(e) => {
-                println!("[DEBUG] Signature verification failed: {:?}", e);
+                println!("[DEBUG] Signature verification failed: {e:?}");
                 return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Signature verification failed" }))));
             }
         }
@@ -386,7 +383,7 @@ async fn post_tx(
         println!("[DEBUG]   Shard ID: {}", signed_tx.shard_id);
         println!("[DEBUG]   Signature length: {}", signed_tx.signature.len());
         println!("[DEBUG]   Public key length: {}", signed_tx.public_key.len());
-        println!("[DEBUG]   Payload length: {}", payload_len);
+        println!("[DEBUG]   Payload length: {payload_len}");
         println!("[DEBUG]   FindAG Time: {}", signed_tx.findag_time);
         println!("[DEBUG]   HashTimer: {:02x?}", &signed_tx.hashtimer);
         
@@ -454,12 +451,15 @@ async fn post_tx(
             
             let shard_id = tx.shard_id.unwrap_or(0);
             
-            // Create a dummy keypair for signing (in production, this should be the node's keypair)
-            let keypair = Keypair::generate(&mut rand::rngs::OsRng);
+            // Create a dummy signing key for signing (in production, this should be the node's signing key)
+            let mut rng = rand::rngs::OsRng;
+            let mut secret_bytes = [0u8; 32];
+            rng.fill_bytes(&mut secret_bytes);
+            let signing_key = SigningKey::from_bytes(&secret_bytes);
             
             // Create a message to sign (transaction data)
             let message = format!("{}:{}:{}:{}", tx.from, tx.to, tx.amount, tx.currency);
-            let signature = keypair.sign(message.as_bytes());
+            let signature = signing_key.sign(message.as_bytes());
             
             // Convert ApiTransaction to core Transaction
             let core_tx = Transaction {
@@ -470,7 +470,7 @@ async fn post_tx(
                 findag_time: 0, // Will be set by the system
                 hashtimer: [0u8; 32], // Will be computed by the system
                 signature,
-                public_key: keypair.public,
+                public_key: signing_key.verifying_key(),
                 shard_id: ShardId(shard_id),
                 source_shard: None,
                 dest_shard: None,
@@ -484,7 +484,7 @@ async fn post_tx(
             println!("[DEBUG]   To: {}", tx.to);
             println!("[DEBUG]   Amount: {}", tx.amount);
             println!("[DEBUG]   Currency: {}", tx.currency);
-            println!("[DEBUG]   Shard ID: {}", shard_id);
+            println!("[DEBUG]   Shard ID: {shard_id}");
             
             // Add to transaction pool
             println!("[DEBUG] Adding simple transaction to pool...");
@@ -497,7 +497,7 @@ async fn post_tx(
                 state.network_propagator.broadcast(&msg).await;
                 
                 println!("[DEBUG] SUCCESS: Simple transaction added to pool");
-                println!("Processed simple tx: {:?} (shard_id={})", tx, shard_id);
+                println!("Processed simple tx: {tx:?} (shard_id={shard_id})");
                 Ok(Json(serde_json::json!({ "status": "ok", "shard_id": shard_id, "message": "Transaction added to pool" })))
             } else {
                 println!("[DEBUG] REJECTION: Simple transaction rejected by pool");
@@ -533,14 +533,22 @@ async fn add_validator(
         Ok(bytes) => bytes,
         Err(_) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid public key"})))),
     };
-    let public_key = match PublicKey::from_bytes(&public_key_bytes) {
-        Ok(pk) => pk,
-        Err(_) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid public key"})))),
+    let public_key_bytes: [u8; 32] = match public_key_bytes.try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Invalid public key length"
+        })))),
+    };
+    let public_key = match VerifyingKey::from_bytes(&public_key_bytes) {
+        Ok(key) => key,
+        Err(_) => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Invalid public key format"
+        })))),
     };
     
     state.validator_set.lock().unwrap().add_validator(address, public_key, 1000); // Default stake of 1000
     if let Err(e) = state.storage.store_validator_set(&state.validator_set.lock().unwrap()) {
-        eprintln!("Failed to store validator set: {}", e);
+        eprintln!("Failed to store validator set: {e}");
         return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "storage error"}))));
     }
     
@@ -559,11 +567,11 @@ async fn remove_validator(
     let address = Address(address.clone());
     state.validator_set.lock().unwrap().remove_validator(&address);
     if let Err(e) = state.storage.store_validator_set(&state.validator_set.lock().unwrap()) {
-        eprintln!("Failed to store validator set: {}", e);
+        eprintln!("Failed to store validator set: {e}");
         return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "storage error"}))));
     }
     
-    audit_log(&username, "remove_validator", &format!("address={}", address));
+    audit_log(&username, "remove_validator", &format!("address={address}"));
     Ok((StatusCode::OK, Json(serde_json::json!({"status": "removed"}))))
 }
 
@@ -578,11 +586,11 @@ async fn slash_validator(
     let address = Address(address.clone());
     state.validator_set.lock().unwrap().set_status(&address, ValidatorStatus::Slashed);
     if let Err(e) = state.storage.store_validator_set(&state.validator_set.lock().unwrap()) {
-        eprintln!("Failed to store validator set: {}", e);
+        eprintln!("Failed to store validator set: {e}");
         return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "storage error"}))));
     }
     
-    audit_log(&username, "slash_validator", &format!("address={}", address));
+    audit_log(&username, "slash_validator", &format!("address={address}"));
     Ok((StatusCode::OK, Json(serde_json::json!({"status": "slashed"}))))
 }
 
@@ -590,74 +598,80 @@ async fn submit_proposal(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ProposalSubmitReq>
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let _proposer = Address(req.proposer);
-    let _proposal_type = match req.proposal_type.as_str() {
+    let mut state_guard = state.governance_state.lock().unwrap();
+    let now = chrono::Utc::now().timestamp() as u64;
+    let (proposal_type, title, description) = match req.proposal_type.as_str() {
         "add" => {
-            let _address = Address(req.address.unwrap());
-            let _public_key = hex::decode(req.public_key.unwrap()).unwrap();
-            "add_validator"
+            let address = req.address.clone().unwrap_or_default();
+            let public_key = req.public_key.clone().unwrap_or_default();
+            (
+                crate::consensus::governance::ProposalType::AddValidator { address: address.clone(), public_key: public_key.clone() },
+                format!("Add Validator {address}"),
+                format!("Add validator with address {address} and public key {public_key}"),
+            )
         },
         "remove" => {
-            let _address = Address(req.address.unwrap());
-            "remove_validator"
+            let address = req.address.clone().unwrap_or_default();
+            (
+                crate::consensus::governance::ProposalType::RemoveValidator { address: address.clone() },
+                format!("Remove Validator {address}"),
+                format!("Remove validator with address {address}"),
+            )
         },
         "slash" => {
-            let _address = Address(req.address.unwrap());
-            "slash_validator"
+            let address = req.address.clone().unwrap_or_default();
+            (
+                crate::consensus::governance::ProposalType::SlashValidator { address: address.clone(), reason: "Manual slash".to_string() },
+                format!("Slash Validator {address}"),
+                format!("Slash validator with address {address}"),
+            )
         },
         _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid proposal_type"}))),
     };
-    let _now = chrono::Utc::now().timestamp() as u64;
-    let state_guard = state.governance_state.lock().unwrap();
-    let id = 1; // Placeholder
-    if let Err(e) = state.storage.store_governance_state(&state_guard) {
-        eprintln!("Failed to store governance state: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "storage error"})));
+    let proposer = req.proposer.clone();
+    let duration = Some(state_guard.config.min_proposal_duration);
+    match state_guard.create_proposal(proposer, title, description, proposal_type, duration) {
+        Ok(proposal_id) => {
+            if let Err(e) = state.storage.store_governance_state(&state_guard) {
+                eprintln!("Failed to store governance state: {e}");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "storage error"})));
+            }
+            (StatusCode::OK, Json(serde_json::json!({"proposal_id": proposal_id})))
+        },
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))),
     }
-    (StatusCode::OK, Json(serde_json::json!({"proposal_id": id})))
 }
 
 async fn vote_proposal(
     State(state): State<Arc<AppState>>,
-    Path(_id): Path<u64>, 
+    Path(id): Path<u64>,
     Json(req): Json<VoteReq>
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let _voter = Address(req.voter);
-    let state_guard = state.governance_state.lock().unwrap();
-    let ok = true; // Placeholder
-    if !ok {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "proposal not found"})));
+    let mut state_guard = state.governance_state.lock().unwrap();
+    let proposal_id = format!("proposal_{}", id);
+    // For now, use 1 as stake_weight (replace with real stake lookup)
+    let stake_weight = 1u64;
+    let reason = None;
+    match state_guard.submit_vote(&proposal_id, req.voter.clone(), req._approve, stake_weight, reason) {
+        Ok(_) => {
+            if let Err(e) = state.storage.store_governance_state(&state_guard) {
+                eprintln!("Failed to store governance state: {e}");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "storage error"})));
+            }
+            (StatusCode::OK, Json(serde_json::json!({"status": "vote recorded"})))
+        },
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))),
     }
-    // Check for approval and enact if approved
-    let vset_guard = state.validator_set.lock().unwrap();
-    let enacted = false; // Placeholder
-    if enacted {
-        if let Err(e) = state.storage.store_validator_set(&vset_guard) {
-            eprintln!("Failed to store validator set: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "storage error"})));
-        }
-    }
-    if let Err(e) = state.storage.store_governance_state(&state_guard) {
-        eprintln!("Failed to store governance state: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "storage error"})));
-    }
-    (StatusCode::OK, Json(serde_json::json!({"status": "vote recorded"})))
-}
-
-async fn list_proposals(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let state_guard = state.governance_state.lock().unwrap();
-    let proposals: Vec<_> = state_guard.proposals.values().collect();
-    Json(serde_json::json!(proposals))
 }
 
 async fn get_proposal(
     State(state): State<Arc<AppState>>,
-    Path(_id): Path<u64>
+    Path(id): Path<u64>
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let _state_guard = state.governance_state.lock().unwrap();
-    let prop: Option<serde_json::Value> = None; // Placeholder
-    if let Some(ref _prop) = prop {
-        (StatusCode::OK, Json(serde_json::json!(_prop)))
+    let state_guard = state.governance_state.lock().unwrap();
+    let proposal_id = format!("proposal_{}", id);
+    if let Some(prop) = state_guard.get_proposal(&proposal_id) {
+        (StatusCode::OK, Json(serde_json::to_value(prop).unwrap()))
     } else {
         (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "not found"})))
     }
@@ -674,7 +688,7 @@ async fn outbound_bridge(
     Json(req): Json<BridgeTx>
 ) -> Json<serde_json::Value> {
     // TODO: Validate and process outbound bridge transaction
-    println!("[Bridge] Outbound: {:?}", req);
+    println!("[Bridge] Outbound: {req:?}");
     Json(serde_json::json!({ "status": "pending", "details": "Bridge logic not yet implemented" }))
 }
 
@@ -684,7 +698,7 @@ async fn inbound_bridge(
     Json(req): Json<BridgeTx>
 ) -> Json<serde_json::Value> {
     // TODO: Validate and process inbound bridge transaction
-    println!("[Bridge] Inbound: {:?}", req);
+    println!("[Bridge] Inbound: {req:?}");
     Json(serde_json::json!({ "status": "pending", "details": "Bridge logic not yet implemented" }))
 }
 
@@ -704,7 +718,7 @@ async fn submit_confidential_tx(
     Json(req): Json<ConfidentialTx>
 ) -> Json<serde_json::Value> {
     // TODO: Validate and process confidential transaction
-    println!("[Confidential] Received confidential tx: {:?}", req);
+    println!("[Confidential] Received confidential tx: {req:?}");
     Json(serde_json::json!({ "status": "pending", "details": "Confidential tx logic not yet implemented" }))
 }
 
@@ -736,7 +750,7 @@ async fn get_block(
                 "block_id": id,
                 "parent_blocks": block.parent_blocks.iter().map(hex::encode).collect::<Vec<_>>(),
                 "merkle_root": block.merkle_root.map(hex::encode),
-                "transactions": block.transactions.iter().map(|tx| hex::encode(&tx.hashtimer)).collect::<Vec<_>>()
+                "transactions": block.transactions.iter().map(|tx| hex::encode(tx.hashtimer)).collect::<Vec<_>>()
             })));
         }
     }
@@ -757,7 +771,7 @@ async fn get_merkle_proof(
     };
     if let Some(block_id) = id_bytes {
         if let Some(block) = state.storage.load_block(&block_id) {
-            let tx_hashes: Vec<String> = block.transactions.iter().map(|tx| hex::encode(&tx.hashtimer)).collect();
+            let tx_hashes: Vec<String> = block.transactions.iter().map(|tx| hex::encode(tx.hashtimer)).collect();
             if let Some(idx) = tx_hashes.iter().position(|h| h == &tx_hash) {
                 use crate::core::bridge::merkle_proof;
                 let proof = merkle_proof(&tx_hashes, idx);
@@ -777,7 +791,7 @@ async fn get_merkle_proof(
 fn audit_log(subject: &str, action: &str, details: &str) {
     let now = chrono::Utc::now().to_rfc3339();
     let mut file = OpenOptions::new().create(true).append(true).open("audit.log").unwrap();
-    writeln!(file, "{} | {} | {} | {}", now, subject, action, details).unwrap();
+    writeln!(file, "{now} | {subject} | {action} | {details}").unwrap();
 }
 
 pub fn init_http_server(
@@ -863,9 +877,9 @@ pub async fn start(
         .route("/tx", post(submit_transaction))
         .with_state(tx_pool);
 
-    let addr = format!("0.0.0.0:{}", port);
+    let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr).await?;
-    println!("HTTP server listening on {}", addr);
+    println!("HTTP server listening on {addr}");
     
     axum::serve(listener, app).await?;
     Ok(())
@@ -890,8 +904,11 @@ async fn submit_transaction(
 // Update the keypair generation in the generate_test_data function
 #[allow(dead_code)]
 async fn generate_test_data(State(_state): State<AppState>) -> impl IntoResponse {
-    let keypair = Keypair::generate(&mut rand::rngs::OsRng);
-    let _address = Address::from_public_key(&keypair.public);
+    let mut rng = rand::rngs::OsRng;
+    let mut secret_bytes = [0u8; 32];
+    rng.fill_bytes(&mut secret_bytes);
+    let signing_key = SigningKey::from_bytes(&secret_bytes);
+    let _address = Address::from_signing_key(&signing_key);
     
     // ... rest of the function remains the same ...
 } 

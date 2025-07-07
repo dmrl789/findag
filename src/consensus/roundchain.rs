@@ -4,7 +4,7 @@
 // This Round implementation uses a simple linear chain.
 // No Round DAG logic — finality is strict, ordered, and single-parent.
 
-use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
+use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use crate::core::address::Address;
@@ -23,7 +23,7 @@ pub struct Round {
     pub findag_time: u64,                     // FinDAG Time for deterministic ordering
     pub proposer: Address,                    // Round proposer address
     pub proposer_signature: Signature,        // Proposer's signature
-    pub proposer_public_key: PublicKey,       // Proposer's public key
+    pub proposer_public_key: VerifyingKey,    // Proposer's public key
 }
 
 /// Serializable version of Round for network transmission
@@ -60,8 +60,8 @@ impl TryFrom<SerializableRound> for Round {
     type Error = Box<dyn std::error::Error>;
     
     fn try_from(sround: SerializableRound) -> Result<Self, Self::Error> {
-        let proposer_signature = Signature::from_bytes(&sround.proposer_signature_bytes)?;
-        let proposer_public_key = PublicKey::from_bytes(&sround.proposer_public_key_bytes)?;
+        let proposer_signature = Signature::from_bytes(&sround.proposer_signature_bytes.try_into().unwrap());
+        let proposer_public_key = VerifyingKey::from_bytes(&sround.proposer_public_key_bytes.try_into().unwrap())?;
         
         Ok(Self {
             round_number: sround.round_number,
@@ -104,7 +104,7 @@ impl RoundChain {
         round_number: u64,
         finalized_blocks: Vec<Block>,
         findag_time: u64,
-        proposer_keypair: &Keypair,
+        proposer_keypair: &SigningKey,
         proposer_address: Address,
     ) -> Result<Round, String> {
         // Validate round number is sequential
@@ -152,7 +152,7 @@ impl RoundChain {
             findag_time,
             proposer: proposer_address,
             proposer_signature,
-            proposer_public_key: proposer_keypair.public,
+            proposer_public_key: proposer_keypair.verifying_key(),
         };
 
         Ok(round)

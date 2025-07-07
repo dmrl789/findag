@@ -3,7 +3,7 @@ use crate::core::types::Transaction;
 use sha2::{Sha256, Digest};
 
 use crate::core::address::Address;
-use ed25519_dalek;
+use ed25519_dalek::{Signature, VerifyingKey};
 
 /// Map ISO20022Transaction into your internal Transaction format
 pub fn iso20022_to_findag_tx(iso_tx: &ISO20022Transaction) -> Transaction {
@@ -24,8 +24,8 @@ pub fn iso20022_to_findag_tx(iso_tx: &ISO20022Transaction) -> Transaction {
 
     // Create a dummy signature and public key for now
     // In a real implementation, these would be properly signed
-    let dummy_signature = ed25519_dalek::Signature::from_bytes(&[0u8; 64]).unwrap();
-    let dummy_public_key = ed25519_dalek::PublicKey::from_bytes(&[0u8; 32]).unwrap();
+    let dummy_signature = Signature::from_bytes(&[0u8; 64]).unwrap();
+    let dummy_public_key = VerifyingKey::from_bytes(&[0u8; 32]).unwrap();
 
     Transaction {
         from,

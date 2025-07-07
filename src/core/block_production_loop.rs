@@ -9,7 +9,8 @@ use crate::consensus::round_finalizer::RoundFinalizer;
 use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
 use crate::storage::persistent::PersistMsg;
 use crate::metrics;
-use ed25519_dalek::Keypair;
+use ed25519_dalek::SigningKey;
+use libp2p_identity::Keypair;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{sleep, Duration, Instant};
 use hex;
@@ -27,7 +28,7 @@ pub async fn run_block_production_loop(
     dag: &mut DagEngine,
     tx_pool: &ShardedTxPool,
     proposer: Address,
-    keypair: &Keypair,
+    keypair: &SigningKey,
     config: BlockProductionConfig,
     time_manager: &FinDAGTimeManager,
     persist_tx: UnboundedSender<PersistMsg>,
@@ -38,7 +39,7 @@ pub async fn run_block_production_loop(
         
         // DEBUG: Log mempool sizes
         let tx_pool_size = tx_pool.size(config.shard_id);
-        println!("[DEBUG] TxPool size: {}", tx_pool_size);
+        println!("[DEBUG] TxPool size: {tx_pool_size}");
         
         // Get parent blocks before any mutable borrow
         let parent_blocks: Vec<[u8; 32]> = dag.get_tips().await;
@@ -99,7 +100,7 @@ pub async fn run_block_production_loop(
             
             // DEBUG: Additional diagnostics for why no block was produced
             if tx_pool_size > 0 {
-                println!("[DEBUG] WARNING: TxPool has {} transactions but no block was produced!", tx_pool_size);
+                println!("[DEBUG] WARNING: TxPool has {tx_pool_size} transactions but no block was produced!");
                 println!("[DEBUG] This suggests a bug in the block producer logic");
             }
         }

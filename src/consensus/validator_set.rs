@@ -1,4 +1,4 @@
-use ed25519_dalek::PublicKey;
+use ed25519_dalek::VerifyingKey;
 use crate::core::address::Address;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ pub enum ValidatorStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     pub address: Address,
-    pub public_key: PublicKey,
+    pub public_key: VerifyingKey,
     pub status: ValidatorStatus,
     pub metadata: Option<String>,
 }
@@ -53,7 +53,7 @@ impl Default for ValidatorReputation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Validator {
     pub address: Address,
-    pub public_key: PublicKey,
+    pub public_key: VerifyingKey,
     pub stake: u64,
     pub is_active: bool,
     pub reputation: ValidatorReputation,
@@ -97,6 +97,7 @@ pub struct Committee {
 
 /// Quorum rotation manager
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct QuorumRotationManager {
     pub config: CommitteeConfig,
     pub current_committee: Option<Committee>,
@@ -104,16 +105,6 @@ pub struct QuorumRotationManager {
     pub last_rotation_round: u64,
 }
 
-impl Default for QuorumRotationManager {
-    fn default() -> Self {
-        Self {
-            config: CommitteeConfig::default(),
-            current_committee: None,
-            committee_history: Vec::new(),
-            last_rotation_round: 0,
-        }
-    }
-}
 
 /// Validator set for consensus
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,7 +124,7 @@ impl ValidatorSet {
     }
 
     /// Add a validator to the set
-    pub fn add_validator(&mut self, address: Address, public_key: PublicKey, stake: u64) {
+    pub fn add_validator(&mut self, address: Address, public_key: VerifyingKey, stake: u64) {
         let validator = Validator {
             address: address.clone(),
             public_key,
@@ -150,7 +141,7 @@ impl ValidatorSet {
     pub fn add_validator_with_metadata(
         &mut self, 
         address: Address, 
-        public_key: PublicKey, 
+        public_key: VerifyingKey, 
         stake: u64,
         institution_name: String,
         region: String,
@@ -280,8 +271,8 @@ impl ValidatorSet {
     /// Record a validator signature for the current committee
     pub fn record_signature(&mut self, validator_address: &Address, round_number: u64) {
         if let Some(committee) = &mut self.quorum_manager.current_committee {
-            if committee.round_number == round_number && committee.validators.contains(validator_address) {
-                if !committee.signatures_received.contains(validator_address) {
+            if committee.round_number == round_number && committee.validators.contains(validator_address)
+                && !committee.signatures_received.contains(validator_address) {
                     committee.signatures_received.push(validator_address.clone());
                     
                     // Check if quorum is achieved
@@ -303,7 +294,6 @@ impl ValidatorSet {
                             .as_secs();
                     }
                 }
-            }
         }
     }
 
