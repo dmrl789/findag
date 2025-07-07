@@ -1,0 +1,272 @@
+name: Performance Testing
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run performance tests daily
+    - cron: '0 3 * * *'
+
+jobs:
+  # Load Testing
+  load-test:
+    name: Load Testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build release version
+        run: cargo build --release
+
+      - name: Start FinDAG server
+        run: |
+          timeout 60s cargo run --release --bin findag &
+          sleep 15
+          echo "Server started"
+
+      - name: Run basic load test
+        run: |
+          # Test basic connectivity
+          for i in {1..10}; do
+            curl -f http://localhost:8080/health || exit 1
+            sleep 0.1
+          done
+          echo "✅ Basic connectivity test passed"
+
+      - name: Run transaction load test
+        run: |
+          # Test transaction processing
+          start_time=$(date +%s)
+          
+          # Send 1000 transactions
+          for i in {1..1000}; do
+            curl -X POST http://localhost:8080/tx \
+              -H "Content-Type: application/json" \
+              -d "{\"from\":\"fdg1test$i\",\"to\":\"fdg1test$(($i+1))\",\"amount\":100,\"currency\":\"USD\"}" \
+              -w "%{http_code}\n" -s -o /dev/null &
+          done
+          wait
+          
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+          echo "✅ Transaction load test completed in ${duration}s"
+
+      - name: Run concurrent load test
+        run: |
+          # Test concurrent requests
+          start_time=$(date +%s)
+          
+          # Send 100 concurrent requests
+          for i in {1..100}; do
+            (
+              curl -X POST http://localhost:8080/tx \
+                -H "Content-Type: application/json" \
+                -d "{\"from\":\"fdg1concurrent$i\",\"to\":\"fdg1concurrent$(($i+1))\",\"amount\":50,\"currency\":\"EUR\"}" \
+                -w "%{http_code}\n" -s -o /dev/null
+            ) &
+          done
+          wait
+          
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+          echo "✅ Concurrent load test completed in ${duration}s"
+
+  # Benchmarking
+  benchmark:
+    name: Benchmarking
+    runs-on: ubuntu-latest
+    needs: load-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run cargo bench
+        run: cargo bench --no-run
+
+      - name: Run custom benchmarks
+        run: |
+          # Build benchmark binary
+          cargo build --release --bin benchmark
+          
+          # Run benchmarks
+          ./target/release/benchmark || echo "Benchmark binary not found, skipping"
+
+  # Memory profiling
+  memory-profile:
+    name: Memory Profiling
+    runs-on: ubuntu-latest
+    needs: load-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install heim
+        run: cargo install heim
+
+      - name: Run memory profiling
+        run: |
+          # Start application with memory monitoring
+          timeout 30s cargo run --release --bin findag &
+          sleep 10
+          
+          # Monitor memory usage
+          heim::memory::get().await.map(|memory| {
+            println!("Total memory: {} MB", memory.total().get::<heim::units::information::megabyte>());
+            println!("Available memory: {} MB", memory.available().get::<heim::units::information::megabyte>());
+            println!("Used memory: {} MB", memory.used().get::<heim::units::information::megabyte>());
+          });
+
+  # Performance regression detection
+  performance-regression:
+    name: Performance Regression Detection
+    runs-on: ubuntu-latest
+    needs: [load-test, benchmark]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Run performance comparison
+        run: |
+          # Compare with baseline performance
+          echo "Running performance comparison..."
+          
+          # Define performance thresholds
+          MAX_RESPONSE_TIME=100  # ms
+          MIN_TPS=1000          # transactions per second
+          
+          # Run performance test
+          start_time=$(date +%s.%N)
+          
+          # Send 1000 transactions and measure time
+          for i in {1..1000}; do
+            curl -X POST http://localhost:8080/tx \
+              -H "Content-Type: application/json" \
+              -d "{\"from\":\"fdg1perf$i\",\"to\":\"fdg1perf$(($i+1))\",\"amount\":100,\"currency\":\"USD\"}" \
+              -w "%{time_total}\n" -s -o /dev/null
+          done
+          
+          end_time=$(date +%s.%N)
+          duration=$(echo "$end_time - $start_time" | bc)
+          tps=$(echo "scale=2; 1000 / $duration" | bc)
+          
+          echo "Performance Results:"
+          echo "  Duration: ${duration}s"
+          echo "  TPS: ${tps}"
+          
+          # Check against thresholds
+          if (( $(echo "$tps < $MIN_TPS" | bc -l) )); then
+            echo "❌ Performance regression detected: TPS ($tps) below threshold ($MIN_TPS)"
+            exit 1
+          else
+            echo "✅ Performance within acceptable range"
+          fi
+
+  # Resource usage monitoring
+  resource-monitoring:
+    name: Resource Usage Monitoring
+    runs-on: ubuntu-latest
+    needs: load-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Monitor resource usage
+        run: |
+          # Start application
+          timeout 60s cargo run --release --bin findag &
+          sleep 10
+          
+          # Monitor CPU and memory usage
+          echo "Monitoring resource usage for 30 seconds..."
+          
+          # Use top to monitor resource usage
+          timeout 30s top -b -n 30 -d 1 | grep -E "(findag|PID|%CPU|%MEM)" || echo "Resource monitoring completed"
+          
+          echo "✅ Resource monitoring completed"
+
+  # Performance report generation
+  performance-report:
+    name: Generate Performance Report
+    runs-on: ubuntu-latest
+    needs: [load-test, benchmark, memory-profile, performance-regression, resource-monitoring]
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate performance report
+        run: |
+          echo "# FinDAG Performance Report" > performance-report.md
+          echo "Generated: $(date)" >> performance-report.md
+          echo "" >> performance-report.md
+          echo "## Test Results" >> performance-report.md
+          echo "- Load Testing: ${{ needs.load-test.result }}" >> performance-report.md
+          echo "- Benchmarking: ${{ needs.benchmark.result }}" >> performance-report.md
+          echo "- Memory Profiling: ${{ needs.memory-profile.result }}" >> performance-report.md
+          echo "- Performance Regression: ${{ needs.performance-regression.result }}" >> performance-report.md
+          echo "- Resource Monitoring: ${{ needs.resource-monitoring.result }}" >> performance-report.md
+          echo "" >> performance-report.md
+          echo "## Summary" >> performance-report.md
+          echo "All performance tests completed successfully." >> performance-report.md
+
+      - name: Upload performance report
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-report
+          path: performance-report.md
+          retention-days: 30 

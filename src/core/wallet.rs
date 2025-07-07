@@ -1,6 +1,6 @@
 use crate::core::address::{Address, generate_address};
 use crate::core::types::Transaction;
-use ed25519_dalek::{VerifyingKey, SigningKey, Signer};
+use ed25519_dalek::{SigningKey, Signer};
 use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::Path;

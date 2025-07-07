@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer};
+use ed25519_dalek::{SigningKey, Signer};
 use std::fs;
 use std::path::PathBuf;
 use std::io::{self, Write};

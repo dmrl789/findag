@@ -1,4 +1,6 @@
-use x25519_dalek::{EphemeralSecret, PublicKey};
+use x25519_dalek::PublicKey;
+use x25519_dalek::x25519;
+use x25519_dalek::X25519_BASEPOINT_BYTES;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::{Aead, Payload}};
 use ed25519_dalek::SigningKey;
 use std::collections::HashMap;
@@ -53,7 +55,7 @@ impl PeerEncryptionState {
 
 /// P2P encryption manager
 pub struct P2PEncryption {
-    local_secret: EphemeralSecret,
+    local_secret_bytes: [u8; 32],
     local_public: PublicKey,
     peer_states: Arc<Mutex<HashMap<Address, PeerEncryptionState>>>,
     config: EncryptionConfig,
@@ -63,12 +65,15 @@ impl P2PEncryption {
     /// Create a new encryption manager from an ed25519 signing key
     pub fn new_from_ed25519(_ed25519_signing_key: &SigningKey) -> Self {
         // In a real implementation, you'd derive the x25519 key from ed25519
-        // For now, we'll create a new ephemeral key
-        let local_secret = EphemeralSecret::random_from_rng(OsRng);
-        let local_public = PublicKey::from(&local_secret);
+        // For now, we'll create a new random secret and store its bytes
+        let mut local_secret_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut local_secret_bytes);
+        // Derive public key from secret using x25519 base point multiplication
+        let public_key_bytes = x25519(local_secret_bytes, X25519_BASEPOINT_BYTES);
+        let local_public = PublicKey::from(public_key_bytes);
         
         Self {
-            local_secret,
+            local_secret_bytes,
             local_public,
             peer_states: Arc::new(Mutex::new(HashMap::new())),
             config: EncryptionConfig::default(),
@@ -90,14 +95,11 @@ impl P2PEncryption {
         // Convert peer public key bytes to PublicKey
         let peer_public_key = PublicKey::from(<[u8; 32]>::try_from(&peer_public_key_bytes[..]).map_err(|_| "Invalid peer public key".to_string())?);
         
-        // Create a new ephemeral secret for this key exchange
-        let local_secret = EphemeralSecret::random_from_rng(OsRng);
-        
-        // Compute shared secret
-        let shared_secret = local_secret.diffie_hellman(&peer_public_key);
+        // Use x25519 for key exchange
+        let shared_secret = x25519(self.local_secret_bytes, peer_public_key_bytes.as_slice().try_into().map_err(|_| "Invalid peer public key length")?);
         
         // Create cipher from shared secret
-        let cipher = ChaCha20Poly1305::new_from_slice(shared_secret.as_bytes())
+        let cipher = ChaCha20Poly1305::new_from_slice(&shared_secret)
             .map_err(|_| "Failed to create cipher".to_string())?;
         
         // Store peer state
@@ -232,8 +234,11 @@ impl P2PEncryption {
     /// Rotate encryption keys (for security)
     pub async fn rotate_encryption_keys(&self) {
         // Create new ephemeral secret
-        let new_secret = EphemeralSecret::random_from_rng(OsRng);
-        let new_public = PublicKey::from(&new_secret);
+        let mut new_secret_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut new_secret_bytes);
+        // Derive public key from secret using x25519 base point multiplication
+        let new_public_bytes = x25519(new_secret_bytes, X25519_BASEPOINT_BYTES);
+        let new_public = PublicKey::from(new_public_bytes);
         
         // In a real implementation, you'd want to update the local keys
         // For now, we'll just log the rotation
@@ -245,11 +250,14 @@ impl P2PEncryption {
 impl Clone for P2PEncryption {
     fn clone(&self) -> Self {
         // Create a new ephemeral secret for the clone
-        let new_secret = EphemeralSecret::random_from_rng(OsRng);
-        let new_public = PublicKey::from(&new_secret);
+        let mut new_secret_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut new_secret_bytes);
+        // Derive public key from secret using x25519 base point multiplication
+        let new_public_bytes = x25519(new_secret_bytes, X25519_BASEPOINT_BYTES);
+        let new_public = PublicKey::from(new_public_bytes);
         
         Self {
-            local_secret: new_secret,
+            local_secret_bytes: self.local_secret_bytes,
             local_public: new_public,
             peer_states: self.peer_states.clone(),
             config: self.config.clone(),
@@ -268,8 +276,8 @@ mod tests {
         let mut secret_bytes2 = [0u8; 32];
         rng.fill_bytes(&mut secret_bytes1);
         rng.fill_bytes(&mut secret_bytes2);
-        let signing_key1 = SigningKey::from_bytes(&secret_bytes1).expect("Failed to create signing key");
-        let signing_key2 = SigningKey::from_bytes(&secret_bytes2).expect("Failed to create signing key");
+        let signing_key1 = SigningKey::from_bytes(&secret_bytes1);
+        let signing_key2 = SigningKey::from_bytes(&secret_bytes2);
         
         let encryption1 = P2PEncryption::new_from_ed25519(&signing_key1);
         let encryption2 = P2PEncryption::new_from_ed25519(&signing_key2);
@@ -299,8 +307,8 @@ mod tests {
         let mut secret_bytes2 = [0u8; 32];
         rng.fill_bytes(&mut secret_bytes1);
         rng.fill_bytes(&mut secret_bytes2);
-        let signing_key1 = SigningKey::from_bytes(&secret_bytes1).expect("Failed to create signing key");
-        let signing_key2 = SigningKey::from_bytes(&secret_bytes2).expect("Failed to create signing key");
+        let signing_key1 = SigningKey::from_bytes(&secret_bytes1);
+        let signing_key2 = SigningKey::from_bytes(&secret_bytes2);
         let encryption1 = P2PEncryption::new_from_ed25519(&signing_key1);
         let encryption2 = P2PEncryption::new_from_ed25519(&signing_key2);
         
@@ -331,8 +339,8 @@ mod tests {
         let mut secret_bytes2 = [0u8; 32];
         rng.fill_bytes(&mut secret_bytes1);
         rng.fill_bytes(&mut secret_bytes2);
-        let signing_key1 = SigningKey::from_bytes(&secret_bytes1).expect("Failed to create signing key");
-        let signing_key2 = SigningKey::from_bytes(&secret_bytes2).expect("Failed to create signing key");
+        let signing_key1 = SigningKey::from_bytes(&secret_bytes1);
+        let signing_key2 = SigningKey::from_bytes(&secret_bytes2);
         let encryption1 = P2PEncryption::new_from_ed25519(&signing_key1);
         let original_public_key = encryption1.get_local_public_key_bytes();
         

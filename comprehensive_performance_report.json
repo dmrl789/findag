@@ -1,0 +1,62 @@
+{
+  "database_metrics": {
+    "error_count": 0,
+    "flush_count": 1,
+    "read_operations": 0,
+    "size_on_disk_bytes": 8824650,
+    "tree_count": 2,
+    "uptime_seconds": 300,
+    "write_operations": 0
+  },
+  "load_test_results": {
+    "avg_response_time_ms": 0.0001,
+    "error_rate_percent": 0.0,
+    "failed_requests": 0,
+    "p95_response_time_ms": 0.0,
+    "p99_response_time_ms": 0.0,
+    "successful_requests": 10000,
+    "throughput_tps": 1217.031365733978,
+    "total_requests": 10000
+  },
+  "optimization_analysis": {
+    "critical_issues": 0,
+    "estimated_effort_hours": 32,
+    "estimated_improvement_percent": 3.5,
+    "high_priority_issues": 0,
+    "low_priority_issues": 1,
+    "medium_priority_issues": 1,
+    "overall_score": 98.5
+  },
+  "performance_profile": {
+    "avg_cpu_usage_percent": 0.0,
+    "avg_memory_usage_mb": 0.0,
+    "cpu_bottleneck_detected": false,
+    "io_bottleneck_detected": false,
+    "max_cpu_usage_percent": 0.0,
+    "max_memory_usage_mb": 0.0,
+    "memory_leak_detected": false
+  },
+  "recommendations": [
+    {
+      "category": "Code",
+      "description": "Use connection pooling to reduce database connection overhead",
+      "effort": "Medium",
+      "expected_improvement": "Reduce connection overhead by 30-50%",
+      "impact": "Medium",
+      "priority": "Medium",
+      "title": "Implement Connection Pooling"
+    },
+    {
+      "category": "Code",
+      "description": "Review and optimize data serialization/deserialization",
+      "effort": "Medium",
+      "expected_improvement": "Improve serialization performance by 10-20%",
+      "impact": "Low",
+      "priority": "Low",
+      "title": "Optimize Serialization"
+    }
+  ],
+  "test_suite": "FinDAG Performance Optimization Test",
+  "timestamp": "2025-07-07T13:19:03.155778600+00:00",
+  "version": "0.1.0"
+}

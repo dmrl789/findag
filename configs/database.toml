@@ -1,0 +1,144 @@
+# FinDAG Database Configuration
+# This file contains database configuration profiles for different deployment scenarios
+
+[default]
+# Default configuration - balanced performance and storage efficiency
+cache_capacity_mb = 1024  # 1GB cache
+use_compression = true
+compression_factor = 2
+segment_size_mb = 16      # 16MB segments (sled max)
+flush_interval_ms = 100   # Flush every 100ms
+background_threads = 4
+io_buffer_size_kb = 64    # 64KB I/O buffer
+memory_budget_mb = 2048   # 2GB memory budget
+prefetch_enabled = true
+snapshot_interval = 10000 # Snapshots every 10k operations
+maintenance_interval_seconds = 3600  # Maintenance every hour
+health_check_interval_seconds = 300  # Health check every 5 minutes
+backup_enabled = true
+backup_retention_days = 7
+
+[development]
+# Development configuration - smaller footprint, faster startup
+cache_capacity_mb = 256   # 256MB cache
+use_compression = true
+compression_factor = 3    # Higher compression for storage efficiency
+segment_size_mb = 8       # 8MB segments
+flush_interval_ms = 500   # Less frequent flushes
+background_threads = 2
+io_buffer_size_kb = 32    # 32KB I/O buffer
+memory_budget_mb = 512    # 512MB memory budget
+prefetch_enabled = false  # Disable prefetching to save memory
+snapshot_interval = 20000 # Less frequent snapshots
+maintenance_interval_seconds = 7200  # Maintenance every 2 hours
+health_check_interval_seconds = 600  # Health check every 10 minutes
+backup_enabled = false    # No backups in development
+backup_retention_days = 1
+
+[production]
+# Production configuration - high performance and reliability
+cache_capacity_mb = 2048  # 2GB cache
+use_compression = true
+compression_factor = 2
+segment_size_mb = 16      # 16MB segments (sled max)
+flush_interval_ms = 50    # More frequent flushes for durability
+background_threads = 8
+io_buffer_size_kb = 128   # 128KB I/O buffer
+memory_budget_mb = 4096   # 4GB memory budget
+prefetch_enabled = true
+snapshot_interval = 5000  # More frequent snapshots
+maintenance_interval_seconds = 1800  # Maintenance every 30 minutes
+health_check_interval_seconds = 60   # Health check every minute
+backup_enabled = true
+backup_retention_days = 30
+backup_path = "/backups/findag"
+
+[high_frequency]
+# High-frequency trading configuration - ultra-low latency
+cache_capacity_mb = 4096  # 4GB cache for maximum performance
+use_compression = false   # Disable compression for speed
+compression_factor = 1
+segment_size_mb = 16      # 16MB segments (sled max)
+flush_interval_ms = 25    # Very frequent flushes
+background_threads = 16   # More background threads
+io_buffer_size_kb = 256   # 256KB I/O buffer
+memory_budget_mb = 8192   # 8GB memory budget
+prefetch_enabled = true
+snapshot_interval = 1000  # Very frequent snapshots
+maintenance_interval_seconds = 900   # Maintenance every 15 minutes
+health_check_interval_seconds = 30   # Health check every 30 seconds
+backup_enabled = true
+backup_retention_days = 7
+backup_path = "/backups/findag_hft"
+
+[storage_efficient]
+# Storage-efficient configuration - minimize disk usage
+cache_capacity_mb = 512   # 512MB cache
+use_compression = true
+compression_factor = 4    # Maximum compression
+segment_size_mb = 4       # 4MB segments
+flush_interval_ms = 1000  # Less frequent flushes
+background_threads = 2
+io_buffer_size_kb = 16    # 16KB I/O buffer
+memory_budget_mb = 1024   # 1GB memory budget
+prefetch_enabled = false  # Disable prefetching
+snapshot_interval = 50000 # Less frequent snapshots
+maintenance_interval_seconds = 14400 # Maintenance every 4 hours
+health_check_interval_seconds = 1200 # Health check every 20 minutes
+backup_enabled = true
+backup_retention_days = 14
+backup_path = "/backups/findag_storage"
+
+# Monitoring and alerting configuration
+[monitoring]
+enabled = true
+metrics_export_interval_seconds = 60
+prometheus_endpoint = "/metrics"
+grafana_dashboard_enabled = true
+
+# Alert thresholds
+[monitoring.alerts]
+cache_hit_rate_threshold = 0.8      # Alert if cache hit rate < 80%
+error_rate_threshold = 0.01         # Alert if error rate > 1%
+disk_usage_threshold = 0.9          # Alert if disk usage > 90%
+response_time_threshold_ms = 100    # Alert if response time > 100ms
+
+# Backup configuration
+[backup]
+# S3 backup configuration (optional)
+s3_enabled = false
+s3_bucket = "findag-backups"
+s3_region = "us-west-2"
+s3_prefix = "database"
+
+# Local backup configuration
+local_enabled = true
+local_path = "/backups/findag"
+compression_enabled = true
+encryption_enabled = false
+
+# Backup schedule
+schedule = "0 2 * * *"  # Daily at 2 AM (cron format)
+retention_days = 7
+max_backup_size_gb = 10
+
+# Performance tuning recommendations
+[performance_tuning]
+# Automatic performance tuning
+auto_tune_enabled = true
+tune_interval_hours = 24
+
+# Cache tuning
+cache_tuning_enabled = true
+min_cache_size_mb = 256
+max_cache_size_mb = 8192
+
+# I/O tuning
+io_tuning_enabled = true
+preferred_io_size_kb = 64
+max_io_requests = 1000
+
+# Memory tuning
+memory_tuning_enabled = true
+target_memory_usage_percent = 80
+max_memory_usage_percent = 90 

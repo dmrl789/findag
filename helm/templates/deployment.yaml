@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "findag.fullname" . }}
+  labels:
+    {{- include "findag.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "findag.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "findag.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "findag.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            - name: api
+              containerPort: {{ .Values.service.apiPort }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+            - name: p2p
+              containerPort: {{ .Values.config.network.p2pPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: RUST_LOG
+              value: "info"
+            - name: FINDAG_NETWORK_PORT
+              value: "{{ .Values.config.network.port }}"
+            - name: FINDAG_API_PORT
+              value: "{{ .Values.config.network.apiPort }}"
+            - name: FINDAG_METRICS_PORT
+              value: "{{ .Values.config.network.metricsPort }}"
+            - name: FINDAG_P2P_PORT
+              value: "{{ .Values.config.network.p2pPort }}"
+            - name: FINDAG_ROUND_INTERVAL
+              value: "{{ .Values.config.consensus.roundInterval }}"
+            - name: FINDAG_QUORUM_SIZE
+              value: "{{ .Values.config.consensus.quorumSize }}"
+            - name: FINDAG_DATA_DIR
+              value: "{{ .Values.config.storage.dataDir }}"
+            {{- if .Values.config.security.jwtSecret }}
+            - name: FINDAG_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "findag.fullname" . }}-secrets
+                  key: jwt-secret
+            {{- end }}
+            {{- if .Values.postgresql.enabled }}
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.postgresql.auth.postgresPassword }}@{{ include "findag.fullname" . }}-postgresql:5432/{{ .Values.postgresql.auth.database }}"
+            {{- end }}
+            {{- if .Values.redis.enabled }}
+            - name: REDIS_URL
+              value: "redis://{{ include "findag.fullname" . }}-redis-master:6379"
+            {{- end }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.config.storage.dataDir }}
+          {{- end }}
+          {{- if .Values.monitoring.enabled }}
+          - name: prometheus-config
+            mountPath: /etc/prometheus
+            readOnly: true
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "findag.fullname" . }}-data
+      {{- end }}
+      {{- if .Values.monitoring.enabled }}
+      - name: prometheus-config
+        configMap:
+          name: {{ include "findag.fullname" . }}-prometheus-config
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }} 

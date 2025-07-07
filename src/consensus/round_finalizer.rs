@@ -1,18 +1,12 @@
 // round_finalizer.rs
 // FinDAG deterministic validator assignment and round finalization
 
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier, SecretKey};
+use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
 use crate::consensus::validator_set::{ValidatorSet, Committee, CommitteeConfig};
 use serde::{Serialize, Deserialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
 use hex;
-use crate::consensus::roundchain::Round;
-use crate::core::types::{Block, Transaction};
-use crate::core::address::Address;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Represents a validator in the network
 #[derive(Clone, Debug)]

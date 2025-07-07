@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: findag
+  namespace: findag
+  labels:
+    app: findag
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: findag
+  template:
+    metadata:
+      labels:
+        app: findag
+    spec:
+      containers:
+      - name: findag
+        image: findag:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: findag-secrets
+              key: admin-username
+        - name: ADMIN_PASSWORD_HASH
+          valueFrom:
+            secretKeyRef:
+              name: findag-secrets
+              key: admin-password-hash
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: findag-secrets
+              key: jwt-secret
+        - name: AUDIT_LOG_PATH
+          valueFrom:
+            secretKeyRef:
+              name: findag-secrets
+              key: audit-log-path
+        - name: CORS_ALLOWED_ORIGINS
+          valueFrom:
+            secretKeyRef:
+              name: findag-secrets
+              key: cors-allowed-origins
+        - name: CORS_ALLOWED_METHODS
+          valueFrom:
+            secretKeyRef:
+              name: findag-secrets
+              key: cors-allowed-methods
+        - name: CORS_ALLOWED_HEADERS
+          valueFrom:
+            secretKeyRef:
+              name: findag-secrets
+              key: cors-allowed-headers
+        - name: RATE_LIMIT_REQUESTS_PER_MINUTE
+          value: "100"
+        - name: RATE_LIMIT_REQUESTS_PER_HOUR
+          value: "1000"
+        - name: RATE_LIMIT_LOGIN_ATTEMPTS
+          value: "5"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/configs
+        - name: data-volume
+          mountPath: /app/data
+        - name: logs-volume
+          mountPath: /app/logs
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: config-volume
+        configMap:
+          name: findag-config
+      - name: data-volume
+        persistentVolumeClaim:
+          claimName: findag-data-pvc
+      - name: logs-volume
+        persistentVolumeClaim:
+          claimName: findag-logs-pvc 

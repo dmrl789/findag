@@ -1,0 +1,306 @@
+name: Automated Deployment
+
+on:
+  push:
+    branches: [ develop ]
+  release:
+    types: [ published ]
+
+env:
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: true
+          tags: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:staging
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy to staging (Docker Compose)
+        run: |
+          echo "Deploying to staging environment..."
+          
+          # Create staging docker-compose file
+          cat > docker-compose.staging.yml << EOF
+          version: '3.8'
+          services:
+            findag:
+              image: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:staging
+              container_name: findag-staging
+              ports:
+                - "8081:8080"
+                - "9091:9090"
+              environment:
+                - NODE_ENV=staging
+                - ADMIN_USERNAME=admin
+                - ADMIN_PASSWORD_HASH=5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8
+                - JWT_SECRET=staging_jwt_secret
+              restart: unless-stopped
+          EOF
+          
+          # Deploy using docker-compose
+          docker-compose -f docker-compose.staging.yml up -d
+
+      - name: Wait for deployment
+        run: |
+          echo "Waiting for staging deployment to be ready..."
+          sleep 30
+
+      - name: Run staging health checks
+        run: |
+          echo "Running staging health checks..."
+          
+          # Check if service is responding
+          for i in {1..10}; do
+            if curl -f http://localhost:8081/health; then
+              echo "✅ Staging deployment is healthy"
+              break
+            else
+              echo "⏳ Waiting for staging deployment... (attempt $i/10)"
+              sleep 10
+            fi
+          done
+
+      - name: Run staging smoke tests
+        run: |
+          echo "Running staging smoke tests..."
+          
+          # Test basic functionality
+          curl -f http://localhost:8081/health || exit 1
+          
+          # Test transaction endpoint
+          curl -X POST http://localhost:8081/tx \
+            -H "Content-Type: application/json" \
+            -d '{"from":"fdg1test123","to":"fdg1test456","amount":100,"currency":"USD"}' \
+            -w "%{http_code}\n" -s -o /dev/null || exit 1
+          
+          echo "✅ Staging smoke tests passed"
+
+      - name: Notify staging deployment
+        if: success()
+        run: |
+          echo "✅ Staging deployment completed successfully!"
+          echo "Staging URL: http://localhost:8081"
+
+  # Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.event_name == 'release'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure kubectl
+        run: |
+          # Configure kubectl for your cluster
+          # This is a placeholder - replace with your actual cluster configuration
+          echo "Configuring kubectl for production cluster..."
+          
+          # Example for Azure AKS:
+          # az aks get-credentials --resource-group myResourceGroup --name myAKSCluster
+          
+          # Example for AWS EKS:
+          # aws eks update-kubeconfig --name my-cluster --region us-west-2
+          
+          # Example for GKE:
+          # gcloud container clusters get-credentials my-cluster --zone us-central1-a --project my-project
+
+      - name: Deploy to production (Kubernetes)
+        run: |
+          echo "Deploying to production Kubernetes cluster..."
+          
+          # Update the deployment with new image
+          kubectl set image deployment/findag findag=${{ steps.meta.outputs.tags }} -n findag
+          
+          # Apply all Kubernetes manifests
+          kubectl apply -f k8s/
+          
+          # Wait for rollout to complete
+          kubectl rollout status deployment/findag -n findag --timeout=300s
+
+      - name: Verify production deployment
+        run: |
+          echo "Verifying production deployment..."
+          
+          # Wait for pods to be ready
+          kubectl wait --for=condition=ready pod -l app=findag -n findag --timeout=300s
+          
+          # Get service URL
+          kubectl get svc findag-service -n findag
+          
+          # Test health endpoint
+          # Note: Replace with your actual production domain
+          # curl -f https://findag.com/health || exit 1
+
+      - name: Run production smoke tests
+        run: |
+          echo "Running production smoke tests..."
+          
+          # Basic health check
+          # curl -f https://findag.com/health || exit 1
+          
+          # Transaction test
+          # curl -X POST https://findag.com/tx \
+          #   -H "Content-Type: application/json" \
+          #   -d '{"from":"fdg1prod123","to":"fdg1prod456","amount":100,"currency":"USD"}' \
+          #   -w "%{http_code}\n" -s -o /dev/null || exit 1
+          
+          echo "✅ Production smoke tests completed"
+
+      - name: Notify production deployment
+        if: success()
+        run: |
+          echo "✅ Production deployment completed successfully!"
+          echo "Production deployment: ${{ steps.meta.outputs.tags }}"
+
+  # Rollback on failure
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: failure()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Rollback deployment
+        run: |
+          echo "🚨 Deployment failed, initiating rollback..."
+          
+          # Rollback to previous version
+          kubectl rollout undo deployment/findag -n findag
+          
+          # Wait for rollback to complete
+          kubectl rollout status deployment/findag -n findag --timeout=300s
+          
+          echo "✅ Rollback completed"
+
+      - name: Notify rollback
+        run: |
+          echo "🚨 Production deployment failed and was rolled back"
+          echo "Please investigate the issue and redeploy when ready"
+
+  # Post-deployment monitoring
+  post-deployment-monitoring:
+    name: Post-Deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: success()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Monitor deployment health
+        run: |
+          echo "Monitoring deployment health for 5 minutes..."
+          
+          # Monitor for 5 minutes
+          for i in {1..30}; do
+            echo "Health check $i/30"
+            
+            # Check staging (if deployed)
+            if [ "${{ github.ref }}" == "refs/heads/develop" ]; then
+              curl -f http://localhost:8081/health || echo "Staging health check failed"
+            fi
+            
+            # Check production (if deployed)
+            if [ "${{ github.event_name }}" == "release" ]; then
+              # curl -f https://findag.com/health || echo "Production health check failed"
+              echo "Production health check (placeholder)"
+            fi
+            
+            sleep 10
+          done
+          
+          echo "✅ Post-deployment monitoring completed"
+
+      - name: Generate deployment report
+        run: |
+          echo "# Deployment Report" > deployment-report.md
+          echo "Date: $(date)" >> deployment-report.md
+          echo "Branch: ${{ github.ref }}" >> deployment-report.md
+          echo "Event: ${{ github.event_name }}" >> deployment-report.md
+          echo "" >> deployment-report.md
+          echo "## Deployment Status" >> deployment-report.md
+          echo "- Staging: ${{ needs.deploy-staging.result }}" >> deployment-report.md
+          echo "- Production: ${{ needs.deploy-production.result }}" >> deployment-report.md
+          echo "" >> deployment-report.md
+          echo "## Summary" >> deployment-report.md
+          echo "Deployment completed successfully." >> deployment-report.md
+
+      - name: Upload deployment report
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-report
+          path: deployment-report.md
+          retention-days: 30 

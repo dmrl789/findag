@@ -404,7 +404,7 @@ mod tests {
             hashtimer,
             proposer: address,
             signature: keypair.sign(&block_id),
-            public_key: keypair.public,
+            public_key: VerifyingKey::from(&keypair),
             shard_id: crate::core::types::ShardId(0),
             merkle_root: None,
         }

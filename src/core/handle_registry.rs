@@ -1,11 +1,6 @@
-use ed25519_dalek::{SigningKey, Signature, Signer, VerifyingKey, Verifier};
-use libp2p_identity::PublicKey;
+use ed25519_dalek::{Signature, VerifyingKey, Verifier};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::time::{SystemTime, UNIX_EPOCH};
-use hex;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use chrono::{DateTime, Utc};
@@ -93,10 +88,10 @@ impl HandleRegistry {
         // 4. Parse new pubkey
         let new_pubkey_bytes = STANDARD.decode(&instr.new_pubkey)
             .map_err(|_| "Invalid base64 pubkey")?;
-        let new_pubkey = PublicKey::try_decode_protobuf(&new_pubkey_bytes)
-            .map_err(|_| "Invalid pubkey bytes")?;
+        // let _new_pubkey = PublicKey::try_decode_protobuf(&new_pubkey_bytes)
+        //     .map_err(|_| "Invalid pubkey bytes")?;
         
-        // Convert libp2p_identity::PublicKey to ed25519_dalek::VerifyingKey
+        // Convert to ed25519_dalek::VerifyingKey
         let new_pubkey_ed25519 = VerifyingKey::from_bytes(&new_pubkey_bytes.try_into().map_err(|_| "Invalid pubkey length")?)
             .map_err(|_| "Invalid ed25519 public key format")?;
 
@@ -163,10 +158,10 @@ impl HandleRegistry {
         // 3. Parse new pubkey
         let new_pubkey_bytes = STANDARD.decode(&instr.new_pubkey)
             .map_err(|_| "Invalid base64 pubkey")?;
-        let new_pubkey = PublicKey::try_decode_protobuf(&new_pubkey_bytes)
-            .map_err(|_| "Invalid pubkey bytes")?;
+        // let _new_pubkey = PublicKey::try_decode_protobuf(&new_pubkey_bytes)
+        //     .map_err(|_| "Invalid pubkey bytes")?;
         
-        // Convert libp2p_identity::PublicKey to ed25519_dalek::VerifyingKey
+        // Convert to ed25519_dalek::VerifyingKey
         let new_pubkey_ed25519 = VerifyingKey::from_bytes(&new_pubkey_bytes.try_into().map_err(|_| "Invalid pubkey length")?)
             .map_err(|_| "Invalid ed25519 public key format")?;
         
@@ -312,23 +307,28 @@ impl HandleRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Keypair, Signer};
+    use ed25519_dalek::{SigningKey, Signer};
     use rand::rngs::OsRng;
+    use rand_core::RngCore;
     use serde_json::json;
 
     #[test]
     fn test_register_subhandle() {
         let mut registry = HandleRegistry::default();
         
-        // Create parent keypair
-        let parent_keypair = Keypair::generate(&mut OsRng);
+        // Create parent signing key
+        let mut csprng = OsRng;
+        let mut parent_secret_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut parent_secret_bytes);
+        let parent_signing_key = SigningKey::from_bytes(&parent_secret_bytes);
+        let parent_public_key = VerifyingKey::from(&parent_signing_key);
         let parent_handle = "@hsbc.london.fd".to_string();
         
         // Register parent (simplified, no signature for test)
         let parent_record = HandleRecord {
             handle: parent_handle.clone(),
             parent: None,
-            public_key: parent_keypair.public,
+            public_key: parent_public_key,
             key_history: vec![],
             metadata: None,
             registered_at: Utc::now(),
@@ -338,17 +338,20 @@ mod tests {
             children: vec![],
         };
         registry.handles.insert(parent_handle.clone(), parent_record);
-        registry.pubkey_to_handle.push((parent_keypair.public, parent_handle.clone()));
+        registry.pubkey_to_handle.push((parent_public_key, parent_handle.clone()));
 
         // Create subhandle instruction
-        let sub_keypair = Keypair::generate(&mut OsRng);
+        let mut sub_secret_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut sub_secret_bytes);
+        let sub_signing_key = SigningKey::from_bytes(&sub_secret_bytes);
+        let sub_public_key = VerifyingKey::from(&sub_signing_key);
         let sub_handle = "@trading.hsbc.london.fd".to_string();
         let timestamp = Utc::now().to_rfc3339();
         
         let mut instr = RegisterSubhandleInstruction {
             handle: sub_handle.clone(),
             parent: parent_handle.clone(),
-            new_pubkey: STANDARD.encode(sub_keypair.public.to_bytes()),
+            new_pubkey: STANDARD.encode(sub_public_key.to_bytes()),
             metadata: Some(json!({"role": "trading desk"})),
             timestamp: timestamp.clone(),
             parent_signature: "".to_string(),
@@ -356,7 +359,7 @@ mod tests {
 
         // Sign with parent key
         let payload = HandleRegistry::subhandle_payload_to_sign(&instr);
-        let sig = parent_keypair.sign(payload.as_bytes());
+        let sig = parent_signing_key.sign(payload.as_bytes());
         instr.parent_signature = STANDARD.encode(sig.to_bytes());
 
         // Register subhandle
@@ -369,7 +372,7 @@ mod tests {
         let record = record.unwrap();
         assert_eq!(record.handle, sub_handle);
         assert_eq!(record.parent, Some(parent_handle));
-        assert_eq!(record.public_key, sub_keypair.public);
+        assert_eq!(record.public_key, sub_public_key);
         assert!(!record.revoked);
     }
 } 

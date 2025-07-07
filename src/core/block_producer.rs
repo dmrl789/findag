@@ -1,7 +1,7 @@
 use crate::core::{
     dag_engine::DagEngine,
     tx_pool::ShardedTxPool,
-    types::{Block, Transaction, ShardId},
+    types::{Block, ShardId},
     address::Address,
 };
 use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
@@ -9,14 +9,6 @@ use ed25519_dalek::{Signature, Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use bincode;
 use tracing;
-use crate::consensus::validator_set::ValidatorSet;
-use crate::consensus::roundchain::Round;
-use libp2p_identity::Keypair;
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
-use std::sync::Arc;
 
 /// Configuration for block production
 #[derive(Clone)]

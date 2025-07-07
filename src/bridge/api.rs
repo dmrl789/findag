@@ -60,7 +60,7 @@ pub async fn submit_fix_order(Json(proof_input): Json<FixProofInput>) -> impl In
 
 // --- Stateful handlers for integration with tx_pool ---
 pub async fn submit_corda_proof_with_state(
-    axum::extract::State(tx_pool): axum::extract::State<Arc<ShardedTxPool>>,
+    axum::extract::State(_tx_pool): axum::extract::State<Arc<ShardedTxPool>>,
     Json(proof_input): Json<CordaProofInput>,
 ) -> impl IntoResponse {
     println!("Received Corda proof with state: {:?}", proof_input);
@@ -79,13 +79,13 @@ pub async fn submit_corda_proof_with_state(
 }
 
 pub async fn submit_fix_order_with_state(
-    axum::extract::State(tx_pool): axum::extract::State<Arc<ShardedTxPool>>,
+    axum::extract::State(_tx_pool): axum::extract::State<Arc<ShardedTxPool>>,
     Json(proof_input): Json<FixProofInput>,
 ) -> impl IntoResponse {
     println!("Received FIX Order with state: {:?}", proof_input.fix_raw);
 
     match process_fix_order(proof_input).await {
-        Ok(findag_tx) => {
+        Ok(_findag_tx) => {
             println!("FIX Order accepted and converted to FinDAG transaction!");
             // TODO: Store the transaction in tx_pool
             // tx_pool.add_transaction(findag_tx).await?;

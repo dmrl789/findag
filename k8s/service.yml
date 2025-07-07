@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: findag-service
+  namespace: findag
+  labels:
+    app: findag
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
+  selector:
+    app: findag
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: findag-internal
+  namespace: findag
+  labels:
+    app: findag
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
+  selector:
+    app: findag 

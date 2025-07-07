@@ -2,7 +2,6 @@ pub mod schemas;
 pub mod handler;
 
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ISO20022Transaction {

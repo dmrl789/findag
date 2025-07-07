@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: findag-config
+  namespace: findag
+data:
+  database.toml: |
+    [database]
+    path = "/app/data/findag.db"
+    max_open_files = 1000
+    cache_size = 1024
+    compression = true
+    
+  production.toml: |
+    [network]
+    port = 8080
+    metrics_port = 9090
+    max_connections = 1000
+    
+    [consensus]
+    round_interval_ms = 200
+    validator_timeout_ms = 5000
+    max_validators = 100
+    
+    [security]
+    enable_auth = true
+    rate_limit_requests_per_minute = 100
+    rate_limit_requests_per_hour = 1000
+    max_request_size_bytes = 1048576 

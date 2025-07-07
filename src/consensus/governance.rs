@@ -94,6 +94,50 @@ impl Default for GovernanceConfig {
     }
 }
 
+/// Governance analytics and monitoring data
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GovernanceAnalytics {
+    pub total_proposals_created: u64,
+    pub total_proposals_passed: u64,
+    pub total_proposals_failed: u64,
+    pub total_votes_cast: u64,
+    pub average_voting_participation: f64,
+    pub most_active_voters: Vec<VoterActivity>,
+    pub proposal_type_distribution: HashMap<String, u64>,
+    pub voting_trends: Vec<VotingTrend>,
+    pub recent_activity: Vec<GovernanceEvent>,
+}
+
+/// Voter activity tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoterActivity {
+    pub voter: String,
+    pub total_votes: u64,
+    pub total_stake_voted: u64,
+    pub participation_rate: f64,
+    pub last_vote_timestamp: u64,
+}
+
+/// Voting trend data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VotingTrend {
+    pub period: String, // "daily", "weekly", "monthly"
+    pub total_votes: u64,
+    pub participation_rate: f64,
+    pub approval_rate: f64,
+    pub timestamp: u64,
+}
+
+/// Governance event for activity tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceEvent {
+    pub event_type: String, // "proposal_created", "vote_cast", "proposal_passed", "proposal_failed"
+    pub timestamp: u64,
+    pub actor: String,
+    pub details: String,
+    pub proposal_id: Option<String>,
+}
+
 /// Governance state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(Default)]
@@ -105,11 +149,13 @@ pub struct GovernanceState {
     pub config: GovernanceConfig,
     pub total_stake: u64,
     pub proposal_counter: u64,
+    pub analytics: GovernanceAnalytics,
+    pub events: Vec<GovernanceEvent>,
+    pub voter_activity: HashMap<String, VoterActivity>,
 }
 
-
 impl GovernanceState {
-    /// Create a new proposal
+    /// Create a new proposal with enhanced tracking
     pub fn create_proposal(
         &mut self,
         proposer: String,
@@ -145,8 +191,8 @@ impl GovernanceState {
             id: proposal_id.clone(),
             title,
             description,
-            proposer,
-            proposal_type,
+            proposer: proposer.clone(),
+            proposal_type: proposal_type.clone(),
             timestamp: now,
             voting_start: now,
             voting_end: now + voting_duration,
@@ -159,10 +205,33 @@ impl GovernanceState {
         self.active_proposals.push(proposal_id.clone());
         self.votes.insert(proposal_id.clone(), Vec::new());
 
+        // Update analytics
+        self.analytics.total_proposals_created += 1;
+        
+        // Update proposal type distribution
+        let type_key = match &proposal_type {
+            ProposalType::AddValidator { .. } => "add_validator",
+            ProposalType::RemoveValidator { .. } => "remove_validator",
+            ProposalType::SlashValidator { .. } => "slash_validator",
+            ProposalType::ParameterChange { .. } => "parameter_change",
+            ProposalType::UpgradeProtocol { .. } => "upgrade_protocol",
+            ProposalType::EmergencyPause { .. } => "emergency_pause",
+            ProposalType::EmergencyResume { .. } => "emergency_resume",
+        };
+        *self.analytics.proposal_type_distribution.entry(type_key.to_string()).or_insert(0) += 1;
+
+        // Record event
+        self.record_event(
+            "proposal_created".to_string(),
+            proposer,
+            format!("Created proposal: {}", proposal_id),
+            Some(proposal_id.clone()),
+        );
+
         Ok(proposal_id)
     }
 
-    /// Submit a vote on a proposal
+    /// Submit a vote on a proposal with enhanced tracking
     pub fn submit_vote(
         &mut self,
         proposal_id: &str,
@@ -197,7 +266,7 @@ impl GovernanceState {
         // Create and record vote
         let vote_record = Vote {
             proposal_id: proposal_id.to_string(),
-            voter,
+            voter: voter.clone(),
             vote,
             timestamp: now,
             stake_weight,
@@ -205,6 +274,18 @@ impl GovernanceState {
         };
 
         votes.push(vote_record);
+
+        // Update analytics
+        self.analytics.total_votes_cast += 1;
+        self.update_voter_activity(&voter, stake_weight);
+
+        // Record event
+        self.record_event(
+            "vote_cast".to_string(),
+            voter,
+            format!("Voted {} on proposal {}", if vote { "YES" } else { "NO" }, proposal_id),
+            Some(proposal_id.to_string()),
+        );
 
         // Check if proposal should be finalized
         self.check_proposal_finalization(proposal_id);
@@ -225,10 +306,30 @@ impl GovernanceState {
             if now > proposal.voting_end {
                 if results.quorum_achieved && results.passed {
                     proposal.status = ProposalStatus::Passed;
+                    self.analytics.total_proposals_passed += 1;
+                    self.record_event(
+                        "proposal_passed".to_string(),
+                        "system".to_string(),
+                        format!("Proposal {} passed with {}% approval", proposal_id, (results.approval_percentage * 100.0) as u64),
+                        Some(proposal_id.to_string()),
+                    );
                 } else if results.quorum_achieved && !results.passed {
                     proposal.status = ProposalStatus::Failed;
+                    self.analytics.total_proposals_failed += 1;
+                    self.record_event(
+                        "proposal_failed".to_string(),
+                        "system".to_string(),
+                        format!("Proposal {} failed with {}% approval", proposal_id, (results.approval_percentage * 100.0) as u64),
+                        Some(proposal_id.to_string()),
+                    );
                 } else {
                     proposal.status = ProposalStatus::Expired;
+                    self.record_event(
+                        "proposal_expired".to_string(),
+                        "system".to_string(),
+                        format!("Proposal {} expired without quorum", proposal_id),
+                        Some(proposal_id.to_string()),
+                    );
                 }
 
                 // Remove from active proposals
@@ -238,6 +339,13 @@ impl GovernanceState {
             } else if results.quorum_achieved && results.passed {
                 // Early finalization if quorum and approval are met
                 proposal.status = ProposalStatus::Passed;
+                self.analytics.total_proposals_passed += 1;
+                self.record_event(
+                    "proposal_passed_early".to_string(),
+                    "system".to_string(),
+                    format!("Proposal {} passed early with {}% approval", proposal_id, (results.approval_percentage * 100.0) as u64),
+                    Some(proposal_id.to_string()),
+                );
                 if let Some(pos) = self.active_proposals.iter().position(|id| id == proposal_id) {
                     self.active_proposals.remove(pos);
                 }
@@ -258,7 +366,7 @@ impl GovernanceState {
         let yes_stake: u64 = votes.iter().filter(|v| v.vote).map(|v| v.stake_weight).sum();
         let no_stake: u64 = votes.iter().filter(|v| !v.vote).map(|v| v.stake_weight).sum();
 
-        let quorum_achieved = total_stake_voted >= self.config.min_quorum_percentage as u64 * self.total_stake / 100;
+        let quorum_achieved = total_stake_voted as f64 >= self.config.min_quorum_percentage * self.total_stake as f64;
         let approval_percentage = if total_stake_voted > 0 {
             yes_stake as f64 / total_stake_voted as f64
         } else {
@@ -349,6 +457,11 @@ impl GovernanceState {
             .collect()
     }
 
+    /// List all proposals (active and inactive)
+    pub fn list_proposals(&self) -> Vec<&Proposal> {
+        self.proposals.values().collect()
+    }
+
     /// Get proposal by ID
     pub fn get_proposal(&self, proposal_id: &str) -> Option<&Proposal> {
         self.proposals.get(proposal_id)
@@ -367,5 +480,97 @@ impl GovernanceState {
         stats.insert("executed_proposals".to_string(), self.executed_proposals.len() as u64);
         stats.insert("total_stake".to_string(), self.total_stake);
         stats
+    }
+
+    /// Record a governance event
+    fn record_event(&mut self, event_type: String, actor: String, details: String, proposal_id: Option<String>) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let event = GovernanceEvent {
+            event_type,
+            timestamp: now,
+            actor,
+            details,
+            proposal_id,
+        };
+
+        self.events.push(event);
+        
+        // Keep only last 1000 events to prevent memory bloat
+        if self.events.len() > 1000 {
+            self.events.remove(0);
+        }
+    }
+
+    /// Update voter activity tracking
+    fn update_voter_activity(&mut self, voter: &str, stake_weight: u64) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let activity = self.voter_activity.entry(voter.to_string()).or_insert(VoterActivity {
+            voter: voter.to_string(),
+            total_votes: 0,
+            total_stake_voted: 0,
+            participation_rate: 0.0,
+            last_vote_timestamp: 0,
+        });
+
+        activity.total_votes += 1;
+        activity.total_stake_voted += stake_weight;
+        activity.last_vote_timestamp = now;
+        
+        // Calculate participation rate (simplified - would need total possible votes)
+        activity.participation_rate = (activity.total_votes as f64 / 100.0).min(1.0);
+    }
+
+    /// Get governance analytics
+    pub fn get_analytics(&self) -> &GovernanceAnalytics {
+        &self.analytics
+    }
+
+    /// Get recent governance events
+    pub fn get_recent_events(&self, limit: usize) -> Vec<&GovernanceEvent> {
+        let start = if self.events.len() > limit {
+            self.events.len() - limit
+        } else {
+            0
+        };
+        self.events[start..].iter().collect()
+    }
+
+    /// Get top active voters
+    pub fn get_top_voters(&self, limit: usize) -> Vec<&VoterActivity> {
+        let mut voters: Vec<&VoterActivity> = self.voter_activity.values().collect();
+        voters.sort_by(|a, b| b.total_votes.cmp(&a.total_votes));
+        voters.truncate(limit);
+        voters
+    }
+
+    /// Calculate voting participation rate
+    pub fn calculate_participation_rate(&self) -> f64 {
+        if self.total_stake == 0 {
+            return 0.0;
+        }
+        
+        let total_voted_stake: u64 = self.votes.values()
+            .flatten()
+            .map(|vote| vote.stake_weight)
+            .sum();
+        
+        total_voted_stake as f64 / self.total_stake as f64
+    }
+
+    /// Get proposal success rate
+    pub fn get_success_rate(&self) -> f64 {
+        let total_completed = self.analytics.total_proposals_passed + self.analytics.total_proposals_failed;
+        if total_completed == 0 {
+            return 0.0;
+        }
+        self.analytics.total_proposals_passed as f64 / total_completed as f64
     }
 } 

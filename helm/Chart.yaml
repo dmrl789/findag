@@ -1,0 +1,26 @@
+apiVersion: v2
+name: findag
+description: A Helm chart for FinDAG - High-frequency financial DAG consensus system
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - blockchain
+  - consensus
+  - financial
+  - dag
+home: https://github.com/your-org/findag
+sources:
+  - https://github.com/your-org/findag
+maintainers:
+  - name: FinDAG Team
+    email: team@findag.io
+dependencies:
+  - name: postgresql
+    version: 12.x.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: 17.x.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled 

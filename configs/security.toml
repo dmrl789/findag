@@ -1,0 +1,115 @@
+# FinDAG Security Configuration
+# This file contains security-related configuration for production deployment
+
+[authentication]
+# JWT Configuration
+jwt_expiry_hours = 24
+jwt_algorithm = "HS256"
+
+# Password Policy
+min_password_length = 12
+require_uppercase = true
+require_lowercase = true
+require_numbers = true
+require_special_chars = true
+max_password_age_days = 90
+
+# Login Security
+max_login_attempts = 5
+login_lockout_duration_minutes = 15
+session_timeout_minutes = 60
+
+[rate_limiting]
+# API Rate Limits
+requests_per_minute = 100
+requests_per_hour = 1000
+requests_per_day = 10000
+
+# Login Rate Limits
+login_attempts_per_5min = 5
+login_attempts_per_hour = 10
+
+# Transaction Rate Limits
+tx_per_minute = 50
+tx_per_hour = 500
+
+[input_validation]
+# Request Size Limits
+max_request_size_bytes = 1048576  # 1MB
+max_transaction_size_bytes = 524288  # 512KB
+
+# Address Validation
+min_address_length = 10
+max_address_length = 100
+address_prefix = "fdg1"
+
+# Amount Validation
+max_transaction_amount = 1000000000000  # 1 trillion
+min_transaction_amount = 1
+
+# Currency Whitelist
+allowed_currencies = [
+    "EUR", "USD", "GBP", "JPY", "CHF", "SGD", "AED", "CNY",
+    "BUND", "OAT", "BTP", "GILT", "UST", "JGB", "T-BILL", "CP", "CD",
+    "XAU", "XAG", "XPT", "XPD",
+    "XS1234567890", "FR0000120271", "BE0003796134", "DE0001135275",
+    "ETF1", "UCITS1",
+    "BTC", "ETH", "USDT", "USDC"
+]
+
+[network_security]
+# CORS Configuration
+allowed_origins = ["*"]  # Restrict in production
+allowed_methods = ["GET", "POST", "DELETE"]
+allowed_headers = ["Authorization", "Content-Type"]
+max_age_seconds = 3600
+
+# TLS Configuration
+tls_enabled = true
+tls_min_version = "1.2"
+tls_cipher_suites = [
+    "TLS_AES_128_GCM_SHA256",
+    "TLS_AES_256_GCM_SHA384",
+    "TLS_CHACHA20_POLY1305_SHA256"
+]
+
+[audit_logging]
+# Audit Log Configuration
+enabled = true
+log_file = "audit.log"
+max_log_size_mb = 100
+log_retention_days = 90
+
+# Events to Log
+log_events = [
+    "login_success",
+    "login_failure", 
+    "transaction_submit",
+    "validator_add",
+    "validator_remove",
+    "validator_slash",
+    "proposal_submit",
+    "proposal_vote",
+    "admin_action"
+]
+
+[encryption]
+# Key Management
+key_rotation_days = 30
+encryption_algorithm = "ChaCha20-Poly1305"
+key_derivation_function = "Argon2id"
+
+# Hash Functions
+password_hash_algorithm = "Argon2id"
+transaction_hash_algorithm = "SHA256"
+
+[monitoring]
+# Security Monitoring
+failed_login_threshold = 10
+suspicious_activity_threshold = 5
+alert_on_rate_limit_exceeded = true
+alert_on_authentication_failure = true
+
+# Metrics
+collect_security_metrics = true
+security_metrics_interval_seconds = 60 

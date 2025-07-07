@@ -10,7 +10,6 @@ use crate::dagtimer::findag_time_manager::FinDAGTimeManager;
 use crate::storage::persistent::PersistMsg;
 use crate::metrics;
 use ed25519_dalek::SigningKey;
-use libp2p_identity::Keypair;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{sleep, Duration, Instant};
 use hex;

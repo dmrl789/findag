@@ -1,5 +1,5 @@
 use chrono::Utc;
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+// use ed25519_dalek::Signer;
 use std::fs;
 use clap::{Parser, Subcommand};
 use base64::engine::general_purpose::STANDARD;
@@ -10,11 +10,7 @@ use crate::core::handle_registry::{
     RevokeHandleInstruction,
     HandleRegistry
 };
-use std::path::PathBuf;
 use libp2p_identity::{Keypair, PublicKey};
-use serde::{Serialize, Deserialize};
-use hex;
-use crate::core::address::Address;
 
 #[derive(Parser)]
 #[command(name = "findag-handle-wallet")]
@@ -291,7 +287,7 @@ pub fn generate_keypair(output_path: &str) -> Result<(), String> {
 pub fn extract_pubkey(keypair_path: &str) -> Result<PublicKey, String> {
     let keypair_bytes = fs::read(keypair_path)
         .map_err(|e| format!("Failed to read keypair file: {}", e))?;
-    let keypair = Keypair::ed25519_from_bytes(keypair_bytes)
+    let keypair = Keypair::from_protobuf_encoding(&keypair_bytes)
         .map_err(|e| format!("Invalid keypair format: {}", e))?;
     Ok(keypair.public())
 }

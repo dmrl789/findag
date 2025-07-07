@@ -73,7 +73,7 @@ pub fn mt103_to_findag_tx(mt: &MT103Message) -> Transaction {
 
     // Create a dummy signature and public key for now
     // In a real implementation, these would be properly signed
-    let dummy_signature = Signature::from_bytes(&[0u8; 64]).unwrap();
+    let dummy_signature = Signature::from_bytes(&[0u8; 64]);
     let dummy_public_key = VerifyingKey::from_bytes(&[0u8; 32]).unwrap();
 
     Transaction {
