@@ -52,8 +52,11 @@ pub struct AuditCondition {
 }
 
 /// Audit trail analyzer
+#[allow(dead_code)]
 pub struct AuditTrailAnalyzer {
+    #[allow(dead_code)]
     patterns: Vec<AuditPattern>,
+    #[allow(dead_code)]
     baseline: Arc<RwLock<HashMap<String, f64>>>,
 }
 

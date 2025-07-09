@@ -245,8 +245,11 @@ pub enum ScheduleFrequency {
 }
 
 /// Analytics engine
+#[allow(dead_code)]
 pub struct AnalyticsEngine {
+    #[allow(dead_code)]
     data_sources: HashMap<String, Box<dyn DataSource>>,
+    #[allow(dead_code)]
     report_templates: HashMap<String, ReportConfig>,
     scheduled_reports: Vec<ScheduledReport>,
 }

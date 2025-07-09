@@ -1,7 +1,7 @@
 use findag::enterprise::{
-    analytics::{AnalyticsEngine, BusinessIntelligenceData, ReportConfig, ReportType, TimeRange, TimeGranularity, Aggregation, AggregationFunction, ReportFormat},
+    analytics::{AnalyticsEngine, ReportConfig, ReportType, TimeRange, TimeGranularity, Aggregation, AggregationFunction, ReportFormat},
     multi_tenancy::{MultiTenancyManager, TenantPlan, TenantSettings, SecurityLevel, TenantUpdates, TenantStatus},
-    api_management::{ApiManagementSystem, ApiVersion, ApiVersionStatus, ApiEndpoint, HttpMethod, ApiParameter, ParameterLocation, AuthenticationRequirement, AuthType, DeveloperPortal, ApiKey, ApiKeyStatus},
+    api_management::{ApiManagementSystem, ApiVersion, ApiVersionStatus, ApiEndpoint, HttpMethod, ApiParameter, ParameterLocation, AuthenticationRequirement, AuthType},
 };
 use std::collections::HashMap;
 use chrono::{Utc, Duration};

@@ -1,4 +1,4 @@
-use findag::storage::{initialize_production_storage, get_storage_metrics, perform_storage_maintenance};
+use findag::storage::{initialize_production_storage, get_storage_metrics};
 use findag::performance::{
     LoadTester,
     PerformanceProfiler,

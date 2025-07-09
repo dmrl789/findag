@@ -1,5 +1,4 @@
 use findag::consensus::governance::*;
-use std::collections::HashMap;
 
 fn main() {
     println!("🧪 FinDAG Governance System Test");

@@ -90,9 +90,11 @@ pub enum FindingStatus {
 }
 
 /// Compliance manager
+#[allow(dead_code)]
 pub struct ComplianceManager {
     requirements: Arc<RwLock<HashMap<String, ComplianceRequirement>>>,
     assessments: Arc<RwLock<Vec<ComplianceAssessment>>>,
+    #[allow(dead_code)]
     frameworks: Vec<ComplianceFramework>,
 }
 

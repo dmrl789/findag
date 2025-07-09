@@ -275,8 +275,11 @@ pub struct MultiTenancyManager {
 }
 
 /// Billing engine
+#[allow(dead_code)]
 pub struct BillingEngine {
+    #[allow(dead_code)]
     pricing_plans: HashMap<TenantPlan, PricingPlan>,
+    #[allow(dead_code)]
     usage_trackers: HashMap<String, UsageTracker>,
 }
 
@@ -560,6 +563,7 @@ impl MultiTenancyManager {
         }
     }
 
+    #[allow(dead_code)]
     fn update_resource_usage(&self, usage: &mut ResourceUsage, resource_type: &str, amount: f64) {
         match resource_type {
             "transactions_per_second" => usage.transactions_per_second = amount as u64,

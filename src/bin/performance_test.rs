@@ -1,11 +1,8 @@
 use findag::storage::{initialize_production_storage, get_storage_metrics, perform_storage_maintenance};
 use findag::core::types::{Block, Round, SerializableBlock, SerializableRound};
-use findag::consensus::validator_set::ValidatorSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::time::sleep;
+use std::time::Instant;
 use serde_json::json;
-use std::collections::HashMap;
 use findag::core::address::Address;
 use ed25519_dalek::{Signature, VerifyingKey};
 use findag::core::types::ShardId;

@@ -160,6 +160,7 @@ fn load_signing_key(file: &PathBuf) -> SigningKey {
     SigningKey::from_bytes(&sk_bytes.try_into().unwrap())
 }
 
+#[allow(dead_code)]
 fn load_signing_key_from_file(path: &str) -> Result<SigningKey, Box<dyn std::error::Error>> {
     let keypair_data = fs::read_to_string(path)?;
     let keypair_json: serde_json::Value = serde_json::from_str(&keypair_data)?;
@@ -173,6 +174,7 @@ fn load_signing_key_from_file(path: &str) -> Result<SigningKey, Box<dyn std::err
     }
 }
 
+#[allow(dead_code)]
 fn save_signing_key_to_file(signing_key: &SigningKey, path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let keypair_data = serde_json::json!({
         "secret_key": hex::encode(signing_key.to_bytes()),

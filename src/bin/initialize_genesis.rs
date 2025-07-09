@@ -1,5 +1,5 @@
 use clap::{Command, Arg};
-use ed25519_dalek::{SigningKey, Signer};
+use ed25519_dalek::Signer;
 use findag::core::address::{Address, generate_deterministic_signing_key};
 use serde_json::json;
 use base64::Engine;

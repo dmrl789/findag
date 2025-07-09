@@ -1,6 +1,5 @@
 use findag::storage::{initialize_high_frequency_storage, get_storage_metrics};
 use findag::core::types::{Block, Round, SerializableBlock, SerializableRound};
-use findag::consensus::validator_set::ValidatorSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -16,8 +15,11 @@ struct LoadTestConfig {
     duration_seconds: u64,
     target_tps: u64, // Transactions per second
     concurrent_users: u64,
+    #[allow(dead_code)]
     ramp_up_seconds: u64,
+    #[allow(dead_code)]
     ramp_down_seconds: u64,
+    #[allow(dead_code)]
     test_type: LoadTestType,
 }
 
@@ -304,7 +306,7 @@ async fn simulate_user_workload(
     storage: Arc<findag::storage::PersistentStorage>,
     metrics: Arc<LoadTestMetrics>,
     user_id: u64,
-    requests_per_second: u64,
+    _requests_per_second: u64,
     interval_ms: u64,
 ) {
     let mut request_count = 0;

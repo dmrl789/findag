@@ -8,7 +8,7 @@ use rand::rngs::OsRng;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // 1) Generate test keypair
-    let mut csprng = OsRng {};
+    let _csprng = OsRng {};
     let keypair = Keypair::generate_ed25519();
 
     // 2) Prepare transaction fields

@@ -57,7 +57,9 @@ static RATE_LIMITS: OnceLock<Arc<Mutex<HashMap<String, (Instant, u32)>>>> = Once
 
 // Security configuration
 const MAX_REQUEST_SIZE: usize = 1_048_576; // 1MB
+#[allow(dead_code)]
 const RATE_LIMIT_REQUESTS: u32 = 100;
+#[allow(dead_code)]
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 const JWT_EXPIRY_HOURS: i64 = 24;
 

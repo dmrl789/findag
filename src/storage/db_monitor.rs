@@ -229,7 +229,9 @@ pub enum DatabaseHealthStatus {
 }
 
 /// Database performance analyzer
+#[allow(dead_code)]
 pub struct DatabaseAnalyzer {
+    #[allow(dead_code)]
     storage: Arc<PersistentStorage>,
     monitor: Arc<DatabaseMonitor>,
 }
