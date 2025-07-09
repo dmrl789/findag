@@ -110,9 +110,24 @@ export const formatFileSize = (bytes: number): string => {
 /**
  * Format percentage with 2 decimal places
  */
-export const formatPercentage = (value: number, total: number): string => {
-  if (total === 0) return '0%';
-  return `${((value / total) * 100).toFixed(2)}%`;
+export const formatPercentage = (value: number, total?: number): string => {
+  if (total !== undefined && total === 0) return '0%';
+  if (total !== undefined) {
+    return `${((value / total) * 100).toFixed(2)}%`;
+  }
+  return `${value.toFixed(2)}%`;
+};
+
+/**
+ * Format currency values
+ */
+export const formatCurrency = (amount: number, currency: string = 'USD'): string => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  }).format(amount);
 };
 
 /**

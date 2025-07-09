@@ -1,19 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUp, ArrowDown, DollarSign, Percent } from 'lucide-react';
+import { ArrowUp, ArrowDown, DollarSign, Percent, AlertCircle } from 'lucide-react';
 import { MarketOrder, OrderBook } from '../../types';
 import { formatPrice, formatNumber } from '../../utils/formatters';
+import { finDAGApi } from '../../services/api';
 
 interface TradingFormProps {
   pair: string;
+  onOrderPlaced?: () => void;
 }
 
-export const TradingForm: React.FC<TradingFormProps> = ({ pair }) => {
+export const TradingForm: React.FC<TradingFormProps> = ({ pair, onOrderPlaced }) => {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
   const [amount, setAmount] = useState<string>('');
   const [price, setPrice] = useState<string>('');
   const [total, setTotal] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Calculate total when amount or price changes
   useEffect(() => {
@@ -37,9 +40,10 @@ export const TradingForm: React.FC<TradingFormProps> = ({ pair }) => {
     }
 
     setLoading(true);
+    setError(null);
     
     try {
-      // Here you would call the API to place the order
+      // Call the real API to place the order
       const order: Omit<MarketOrder, 'id' | 'timestamp' | 'status' | 'filledAmount' | 'averagePrice'> = {
         pair,
         side,
@@ -49,17 +53,22 @@ export const TradingForm: React.FC<TradingFormProps> = ({ pair }) => {
         user: 'current-user', // This would come from authentication
       };
 
-      console.log('Placing order:', order);
+      const placedOrder = await finDAGApi.placeOrder(order);
+      console.log('Order placed successfully:', placedOrder);
       
       // Reset form
       setAmount('');
       setPrice('');
       setTotal('');
       
+      // Call callback to refresh data
+      onOrderPlaced?.();
+      
       alert('Order placed successfully!');
-    } catch (error) {
+    } catch (error: any) {
+      const errorMessage = error.message || 'Failed to place order. Please try again.';
+      setError(errorMessage);
       console.error('Failed to place order:', error);
-      alert('Failed to place order. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -219,6 +228,22 @@ export const TradingForm: React.FC<TradingFormProps> = ({ pair }) => {
             </div>
           </div>
         </div>
+
+        {/* Error Display */}
+        {error && (
+          <div className="rounded-md bg-danger-50 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <AlertCircle className="h-5 w-5 text-danger-400" />
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-danger-800">
+                  {error}
+                </h3>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Submit Button */}
         <button

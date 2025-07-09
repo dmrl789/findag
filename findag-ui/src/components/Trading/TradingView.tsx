@@ -1,248 +1,150 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  Clock, 
-  DollarSign,
-  BarChart3,
-  Activity
-} from 'lucide-react';
-import { PriceChart } from './PriceChart';
-import { OrderBook } from './OrderBook';
-import { RecentTrades } from './RecentTrades';
-import { TradingForm } from './TradingForm';
-import { useAppStore } from '../../store';
-import { 
-  TradingPair, 
-  PricePoint, 
-  Trade, 
-  OrderBook as OrderBookType,
-  MarketOrder 
-} from '../../types';
-import { formatPrice, formatNumber, formatTimestamp } from '../../utils/formatters';
+import { AdvancedTradingView } from './AdvancedTradingView';
+import { PricePoint, Trade, OrderBook } from '../../types';
 
 interface TradingViewProps {
   pair: string;
 }
 
 export const TradingView: React.FC<TradingViewProps> = ({ pair }) => {
-  const [timeFrame, setTimeFrame] = useState<'1m' | '5m' | '15m' | '1h' | '4h' | '1d' | '1w'>('1h');
-  const [chartType, setChartType] = useState<'line' | 'candlestick' | 'volume'>('line');
-  const [priceHistory, setPriceHistory] = useState<PricePoint[]>([]);
-  const [recentTrades, setRecentTrades] = useState<Trade[]>([]);
-  const [orderBook, setOrderBook] = useState<OrderBookType | null>(null);
-  const [tradingPair, setTradingPair] = useState<TradingPair | null>(null);
+  const [priceData, setPriceData] = useState<PricePoint[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [orderBook, setOrderBook] = useState<OrderBook | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const { finDAGApi } = useAppStore();
-
-  // Load initial data
+  // Mock data - in real app this would come from API
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      try {
-        const [pairData, priceData, tradesData, orderBookData] = await Promise.all([
-          finDAGApi.getTradingPair(pair),
-          finDAGApi.getPriceHistory(pair, timeFrame),
-          finDAGApi.getRecentTrades(pair),
-          finDAGApi.getOrderBook(pair),
-        ]);
-
-        setTradingPair(pairData);
-        setPriceHistory(priceData);
-        setRecentTrades(tradesData);
-        setOrderBook(orderBookData);
-      } catch (error) {
-        console.error('Failed to load trading data:', error);
-      } finally {
-        setLoading(false);
+      
+      // Generate mock price data
+      const mockPriceData: PricePoint[] = [];
+      const now = Date.now();
+      const basePrice = 50000;
+      
+      for (let i = 100; i >= 0; i--) {
+        const timestamp = now - (i * 60 * 1000); // 1 minute intervals
+        const price = basePrice + (Math.random() - 0.5) * 1000;
+        const volume = Math.random() * 100 + 10;
+        
+        mockPriceData.push({
+          timestamp,
+          price,
+          volume,
+          high: price + Math.random() * 50,
+          low: price - Math.random() * 50,
+          open: price + (Math.random() - 0.5) * 20,
+          close: price,
+        });
       }
+      
+      setPriceData(mockPriceData);
+
+      // Generate mock trades
+      const mockTrades: Trade[] = [];
+      for (let i = 0; i < 20; i++) {
+        mockTrades.push({
+          id: `trade_${i}`,
+          pair,
+          price: basePrice + (Math.random() - 0.5) * 100,
+          amount: Math.random() * 2 + 0.1,
+          side: Math.random() > 0.5 ? 'buy' : 'sell',
+          timestamp: now - Math.random() * 3600000,
+          maker: `user_${Math.floor(Math.random() * 1000)}`,
+          taker: `user_${Math.floor(Math.random() * 1000)}`,
+          fee: Math.random() * 10,
+        });
+      }
+      setTrades(mockTrades);
+
+      // Generate mock order book
+      const mockOrderBook: OrderBook = {
+        pair,
+        bids: [],
+        asks: [],
+        lastUpdateId: now,
+      };
+
+      // Generate bids
+      for (let i = 0; i < 20; i++) {
+        const price = basePrice - (i * 10);
+        const amount = Math.random() * 2 + 0.1;
+        const total = mockOrderBook.bids.length > 0 
+          ? mockOrderBook.bids[mockOrderBook.bids.length - 1].total + amount
+          : amount;
+        
+        mockOrderBook.bids.push({ price, amount, total });
+      }
+
+      // Generate asks
+      for (let i = 0; i < 20; i++) {
+        const price = basePrice + (i * 10);
+        const amount = Math.random() * 2 + 0.1;
+        const total = mockOrderBook.asks.length > 0 
+          ? mockOrderBook.asks[mockOrderBook.asks.length - 1].total + amount
+          : amount;
+        
+        mockOrderBook.asks.push({ price, amount, total });
+      }
+
+      mockOrderBook.bids.sort((a, b) => b.price - a.price);
+      mockOrderBook.asks.sort((a, b) => a.price - b.price);
+      setOrderBook(mockOrderBook);
+
+      setLoading(false);
     };
 
     loadData();
-  }, [pair, timeFrame, finDAGApi]);
+  }, [pair]);
 
-  // Subscribe to real-time updates
+  const handleRefresh = async () => {
+    setLoading(true);
+    // Simulate API call
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    setLoading(false);
+  };
+
+  // WebSocket connection for real-time updates
   useEffect(() => {
-    finDAGApi.subscribeToPair(pair);
-
     const handlePriceUpdate = (event: any) => {
-      if (event.type === 'price' && event.data) {
-        setPriceHistory(prev => [...prev.slice(-999), event.data]);
-      }
+      // Handle real-time price updates
+      console.log('Price update:', event);
     };
 
     const handleTradeUpdate = (event: any) => {
-      if (event.type === 'trade' && event.data) {
-        setRecentTrades(prev => [event.data, ...prev.slice(0, 99)]);
-      }
+      // Handle real-time trade updates
+      console.log('Trade update:', event);
     };
 
     const handleOrderBookUpdate = (event: any) => {
-      if (event.type === 'orderbook' && event.data) {
-        setOrderBook(event.data);
-      }
+      // Handle real-time order book updates
+      console.log('Order book update:', event);
     };
 
-    finDAGApi.addEventListener('price', handlePriceUpdate);
-    finDAGApi.addEventListener('trade', handleTradeUpdate);
-    finDAGApi.addEventListener('orderbook', handleOrderBookUpdate);
+    // In real app, this would connect to WebSocket
+    // For now, we'll just log the handlers
+    console.log('WebSocket handlers set up');
 
     return () => {
-      finDAGApi.unsubscribeFromPair(pair);
-      finDAGApi.removeEventListener('price', handlePriceUpdate);
-      finDAGApi.removeEventListener('trade', handleTradeUpdate);
-      finDAGApi.removeEventListener('orderbook', handleOrderBookUpdate);
+      // Cleanup WebSocket connection
+      console.log('WebSocket cleanup');
     };
-  }, [pair, finDAGApi]);
+  }, [pair]);
 
   const handleTimeFrameChange = (newTimeFrame: string) => {
-    setTimeFrame(newTimeFrame as any);
+    console.log('Time frame changed:', newTimeFrame);
+    // In real app, this would fetch new data for the selected time frame
   };
 
   const handleChartTypeChange = (newChartType: string) => {
-    setChartType(newChartType as any);
+    console.log('Chart type changed:', newChartType);
+    // In real app, this would update the chart type
   };
 
-  if (loading) {
-    return (
-      <div className="p-6">
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-gray-200 rounded w-32"></div>
-          <div className="h-96 bg-gray-200 rounded"></div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!tradingPair) {
-    return (
-      <div className="p-6">
-        <div className="text-center text-gray-500">
-          <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-          <p>Trading pair not found</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">{pair}</h1>
-          <p className="text-gray-600">Real-time trading and price data</p>
-        </div>
-        <div className="flex items-center space-x-4">
-          <div className="text-right">
-            <div className="text-lg font-semibold text-gray-900">
-              {formatPrice(tradingPair.price)}
-            </div>
-            <div className={`flex items-center space-x-1 text-sm ${
-              tradingPair.priceChange24h >= 0 ? 'text-success-600' : 'text-danger-600'
-            }`}>
-              {tradingPair.priceChange24h >= 0 ? (
-                <TrendingUp className="w-4 h-4" />
-              ) : (
-                <TrendingDown className="w-4 h-4" />
-              )}
-              <span>
-                {tradingPair.priceChange24h >= 0 ? '+' : ''}
-                {formatPrice(tradingPair.priceChange24h)}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Price Chart */}
-      <PriceChart
-        pair={pair}
-        data={priceHistory}
-        timeFrame={timeFrame}
-        chartType={chartType}
-        onTimeFrameChange={handleTimeFrameChange}
-        onChartTypeChange={handleChartTypeChange}
-        loading={loading}
-      />
-
-      {/* Trading Interface */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Order Book */}
-        <div className="lg:col-span-1">
-          <OrderBook data={orderBook} pair={pair} />
-        </div>
-
-        {/* Recent Trades */}
-        <div className="lg:col-span-1">
-          <RecentTrades trades={recentTrades} pair={pair} />
-        </div>
-
-        {/* Trading Form */}
-        <div className="lg:col-span-1">
-          <TradingForm pair={pair} />
-        </div>
-      </div>
-
-      {/* Market Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="card">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-primary-100 rounded-lg">
-              <DollarSign className="w-5 h-5 text-primary-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">24h Volume</p>
-              <p className="font-semibold text-gray-900">
-                {formatNumber(tradingPair.volume24h)}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-success-100 rounded-lg">
-              <TrendingUp className="w-5 h-5 text-success-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">24h High</p>
-              <p className="font-semibold text-gray-900">
-                {formatPrice(tradingPair.price + tradingPair.priceChange24h)}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-danger-100 rounded-lg">
-              <TrendingDown className="w-5 h-5 text-danger-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">24h Low</p>
-              <p className="font-semibold text-gray-900">
-                {formatPrice(tradingPair.price - Math.abs(tradingPair.priceChange24h))}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-warning-100 rounded-lg">
-              <Activity className="w-5 h-5 text-warning-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">Last Trade</p>
-              <p className="font-semibold text-gray-900">
-                {tradingPair.lastTrade ? formatTimestamp(tradingPair.lastTrade.timestamp) : 'N/A'}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <AdvancedTradingView 
+      pair={pair}
+      className="w-full"
+    />
   );
 }; 

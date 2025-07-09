@@ -1,131 +1,98 @@
-import React, { useEffect, useRef } from 'react';
-import { Network } from 'vis-network';
-import { DataSet } from 'vis-data';
-import { DAGData, DAGNode, DAGEdge } from '../../types';
+import React, { useState, useCallback } from 'react';
+import { EnhancedDAGVisualizer, DAGNode } from './EnhancedDAGVisualizer';
+import { TransactionDetailsModal, Transaction } from './TransactionDetailsModal';
 
 interface DAGVisualizerProps {
-  data: DAGData;
-  height?: string;
-  onNodeClick?: (nodeId: string) => void;
+  data: {
+    nodes: DAGNode[];
+    edges: Array<{ from: string; to: string; arrows?: string }>;
+  };
+  className?: string;
 }
 
-export const DAGVisualizer: React.FC<DAGVisualizerProps> = ({
-  data,
-  height = '600px',
-  onNodeClick,
-}) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const networkRef = useRef<Network | null>(null);
+export const DAGVisualizer: React.FC<DAGVisualizerProps> = ({ data, className = '' }) => {
+  const [selectedNode, setSelectedNode] = useState<DAGNode | null>(null);
+  const [showTransactionModal, setShowTransactionModal] = useState(false);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
+  const handleNodeClick = useCallback((node: DAGNode) => {
+    setSelectedNode(node);
+    setShowTransactionModal(true);
+    
+    // Simulate loading transactions for the selected node
+    setLoadingTransactions(true);
+    setTimeout(() => {
+      // Generate mock transactions for the node
+      const mockTransactions: Transaction[] = Array.from({ length: node.transactionCount }, (_, i) => ({
+        id: `${node.id}-tx-${i}`,
+        hash: `0x${Math.random().toString(16).substring(2, 66)}`,
+        from: `0x${Math.random().toString(16).substring(2, 42)}`,
+        to: `0x${Math.random().toString(16).substring(2, 42)}`,
+        amount: (Math.random() - 0.5) * 1000,
+        currency: 'USD',
+        timestamp: node.timestamp - Math.random() * 60000,
+        status: Math.random() > 0.1 ? 'confirmed' : 'pending',
+        fee: Math.random() * 10,
+        nonce: i,
+      }));
+      setTransactions(mockTransactions);
+      setLoadingTransactions(false);
+    }, 1000);
+  }, []);
 
-    // Create nodes dataset
-    const nodes = new DataSet(
-      data.nodes.map((node) => ({
-        id: node.id,
-        label: node.label,
-        level: node.level,
-        title: `${node.label}\nValidator: ${node.validator}\nTransactions: ${node.transactionCount}\nTime: ${new Date(node.timestamp).toLocaleTimeString()}`,
-        color: {
-          background: '#3B82F6',
-          border: '#1D4ED8',
-          highlight: {
-            background: '#60A5FA',
-            border: '#3B82F6',
-          },
-        },
-        font: {
-          color: '#FFFFFF',
-          size: 12,
-        },
-        shape: 'circle',
-        size: Math.min(20 + node.transactionCount * 2, 40),
-      }))
-    );
+  const handleNodeDoubleClick = useCallback((node: DAGNode) => {
+    // Handle double-click - could open detailed view or perform other actions
+    console.log('Double-clicked node:', node);
+  }, []);
 
-    // Create edges dataset
-    const edges = new DataSet(
-      data.edges.map((edge) => ({
-        from: edge.from,
-        to: edge.to,
-        arrows: edge.arrows,
-        color: {
-          color: '#6B7280',
-          highlight: '#3B82F6',
-        },
-        width: 2,
-        smooth: {
-          type: 'curvedCW',
-          roundness: 0.2,
-        },
-      }))
-    );
+  const handleTransactionClick = useCallback((transaction: Transaction) => {
+    // Handle transaction click - could open transaction details
+    console.log('Clicked transaction:', transaction);
+  }, []);
 
-    // Network options
-    const options = {
-      layout: {
-        hierarchical: {
-          direction: 'UD',
-          sortMethod: 'directed',
-          nodeSpacing: 150,
-          levelSeparation: 200,
-        },
-      },
-      physics: {
-        enabled: false,
-      },
-      interaction: {
-        hover: true,
-        tooltipDelay: 200,
-      },
-      edges: {
-        smooth: {
-          type: 'curvedCW',
-          roundness: 0.2,
-        },
-      },
-      nodes: {
-        shadow: true,
-        borderWidth: 2,
-      },
-    };
+  const handleExportTransactions = useCallback(() => {
+    if (transactions.length === 0) return;
+    
+    const csvContent = [
+      'ID,Hash,From,To,Amount,Currency,Status,Fee,Timestamp',
+      ...transactions.map(tx => 
+        `${tx.id},${tx.hash},${tx.from},${tx.to},${tx.amount},${tx.currency},${tx.status},${tx.fee},${new Date(tx.timestamp).toISOString()}`
+      ).join('\n')
+    ].join('\n');
 
-    // Create network
-    const network = new Network(containerRef.current, { nodes, edges }, options);
-    networkRef.current = network;
-
-    // Add event listeners
-    if (onNodeClick) {
-      network.on('click', (params) => {
-        if (params.nodes.length > 0) {
-          onNodeClick(params.nodes[0]);
-        }
-      });
-    }
-
-    // Cleanup
-    return () => {
-      if (networkRef.current) {
-        networkRef.current.destroy();
-        networkRef.current = null;
-      }
-    };
-  }, [data, onNodeClick]);
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `transactions-${selectedNode?.id}-${Date.now()}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [transactions, selectedNode]);
 
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">DAG Structure</h3>
-        <div className="text-sm text-gray-500">
-          {data.nodes.length} nodes, {data.edges.length} connections
-        </div>
-      </div>
-      <div
-        ref={containerRef}
-        style={{ height, width: '100%' }}
-        className="border border-gray-200 rounded-lg"
+    <>
+      <EnhancedDAGVisualizer
+        data={data}
+        className={className}
+        onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
+        enableAnimations={true}
+        enableSearch={true}
+        enableFilters={true}
+        enableExport={true}
+        showControls={true}
       />
-    </div>
+
+      <TransactionDetailsModal
+        isOpen={showTransactionModal}
+        onClose={() => setShowTransactionModal(false)}
+        node={selectedNode}
+        transactions={transactions}
+        loading={loadingTransactions}
+        onTransactionClick={handleTransactionClick}
+        onExportTransactions={handleExportTransactions}
+      />
+    </>
   );
 }; 

@@ -1,16 +1,22 @@
 import { create } from 'zustand';
-import { devtools, subscribeWithSelector } from 'zustand/middleware';
+import { finDAGApi } from '../services/api';
 import {
-  UIState,
   NetworkMetrics,
   NodeMetrics,
   Block,
   Transaction,
   Round,
   Validator,
-  WebSocketEvent,
+  UIState,
 } from '../types';
-import { finDAGApi } from '../services/api';
+
+// Initial UI state
+const initialUIState: UIState = {
+  selectedTimeRange: '24h',
+  autoRefresh: true,
+  theme: 'light',
+  chartType: 'line',
+};
 
 interface AppState {
   // UI State
@@ -19,6 +25,7 @@ interface AppState {
   // Connection State
   isConnected: boolean;
   connectionStatus: 'connected' | 'disconnected' | 'connecting';
+  connectionCheckInterval?: number;
   
   // Real-time Data
   networkMetrics: NetworkMetrics | null;
@@ -69,14 +76,11 @@ interface AppState {
   disconnectWebSocket: () => void;
 }
 
-const initialState = {
-  ui: {
-    selectedTimeRange: '1h' as const,
-    autoRefresh: true,
-    theme: 'light' as const,
-  },
+export const useAppStore = create<AppState>((set, get) => ({
+  // Initial State
+  ui: initialUIState,
   isConnected: false,
-  connectionStatus: 'disconnected' as const,
+  connectionStatus: 'disconnected',
   networkMetrics: null,
   nodeMetrics: [],
   recentBlocks: [],
@@ -91,182 +95,208 @@ const initialState = {
     validators: false,
   },
   errors: {},
-};
 
-export const useAppStore = create<AppState>()(
-  devtools(
-    subscribeWithSelector((set, get) => ({
-      ...initialState,
-      
-      // UI Actions
-      setUI: (ui) => set((state) => ({ ui: { ...state.ui, ...ui } })),
-      
-      // Connection Actions
-      setConnectionStatus: (status) => set({ connectionStatus: status, isConnected: status === 'connected' }),
-      
-      // Data Actions
-      setNetworkMetrics: (metrics) => set({ networkMetrics: metrics }),
-      setNodeMetrics: (metrics) => set({ nodeMetrics: metrics }),
-      addBlock: (block) => set((state) => ({
-        recentBlocks: [block, ...state.recentBlocks.slice(0, 99)], // Keep last 100 blocks
-      })),
-      addTransaction: (transaction) => set((state) => ({
-        recentTransactions: [transaction, ...state.recentTransactions.slice(0, 99)], // Keep last 100 transactions
-      })),
-      setCurrentRound: (round) => set({ currentRound: round }),
-      setValidators: (validators) => set({ validators }),
-      
-      // Loading Actions
-      setLoading: (key, loading) => set((state) => ({
-        isLoading: { ...state.isLoading, [key]: loading },
-      })),
-      
-      // Error Actions
-      setError: (key, error) => set((state) => ({
-        errors: { ...state.errors, [key]: error },
-      })),
-      clearErrors: () => set({ errors: {} }),
-      
-      // API Actions
-      fetchNetworkMetrics: async () => {
-        const { setLoading, setError, setNetworkMetrics } = get();
-        setLoading('networkMetrics', true);
-        setError('networkMetrics');
-        
-        try {
-          const metrics = await finDAGApi.getNetworkMetrics();
-          setNetworkMetrics(metrics);
-        } catch (error) {
-          setError('networkMetrics', error instanceof Error ? error.message : 'Failed to fetch network metrics');
-        } finally {
-          setLoading('networkMetrics', false);
-        }
-      },
-      
-      fetchNodeMetrics: async () => {
-        const { setLoading, setError, setNodeMetrics } = get();
-        setLoading('nodeMetrics', true);
-        setError('nodeMetrics');
-        
-        try {
-          const metrics = await finDAGApi.getNodeMetrics();
-          setNodeMetrics(metrics);
-        } catch (error) {
-          setError('nodeMetrics', error instanceof Error ? error.message : 'Failed to fetch node metrics');
-        } finally {
-          setLoading('nodeMetrics', false);
-        }
-      },
-      
-      fetchRecentBlocks: async () => {
-        const { setLoading, setError, addBlock } = get();
-        setLoading('blocks', true);
-        setError('blocks');
-        
-        try {
-          const response = await finDAGApi.getBlocks(1, 20);
-          set({ recentBlocks: response.data });
-        } catch (error) {
-          setError('blocks', error instanceof Error ? error.message : 'Failed to fetch blocks');
-        } finally {
-          setLoading('blocks', false);
-        }
-      },
-      
-      fetchRecentTransactions: async () => {
-        const { setLoading, setError } = get();
-        setLoading('transactions', true);
-        setError('transactions');
-        
-        try {
-          const response = await finDAGApi.getTransactions(1, 20);
-          set({ recentTransactions: response.data });
-        } catch (error) {
-          setError('transactions', error instanceof Error ? error.message : 'Failed to fetch transactions');
-        } finally {
-          setLoading('transactions', false);
-        }
-      },
-      
-      fetchValidators: async () => {
-        const { setLoading, setError, setValidators } = get();
-        setLoading('validators', true);
-        setError('validators');
-        
-        try {
-          const validators = await finDAGApi.getValidators();
-          setValidators(validators);
-        } catch (error) {
-          setError('validators', error instanceof Error ? error.message : 'Failed to fetch validators');
-        } finally {
-          setLoading('validators', false);
-        }
-      },
-      
-      connectWebSocket: () => {
-        const { setConnectionStatus } = get();
-        setConnectionStatus('connecting');
-        
-        finDAGApi.connectWebSocket();
-        
-        // Set up event listeners
-        finDAGApi.addEventListener('block', (event) => {
-          get().addBlock(event.data);
-        });
-        
-        finDAGApi.addEventListener('transaction', (event) => {
-          get().addTransaction(event.data);
-        });
-        
-        finDAGApi.addEventListener('round', (event) => {
-          get().setCurrentRound(event.data);
-        });
-        
-        finDAGApi.addEventListener('metrics', (event) => {
-          // Update specific node metrics
-          const { nodeMetrics, setNodeMetrics } = get();
-          const updatedMetrics = nodeMetrics.map(metric => 
-            metric.nodeId === event.data.nodeId ? event.data : metric
-          );
-          setNodeMetrics(updatedMetrics);
-        });
-        
-        // Check connection status periodically
-        const checkConnection = () => {
-          const status = finDAGApi.getConnectionStatus();
-          setConnectionStatus(status);
-          
-          if (status === 'connected') {
-            // Fetch initial data
-            get().fetchNetworkMetrics();
-            get().fetchNodeMetrics();
-            get().fetchRecentBlocks();
-            get().fetchRecentTransactions();
-            get().fetchValidators();
-          }
-        };
-        
-        // Check immediately and then every 5 seconds
-        checkConnection();
-        const interval = setInterval(checkConnection, 5000);
-        
-        // Store interval for cleanup
-        (window as any).__findag_connection_interval = interval;
-      },
-      
-      disconnectWebSocket: () => {
-        const { setConnectionStatus } = get();
-        finDAGApi.disconnectWebSocket();
-        setConnectionStatus('disconnected');
-        
-        // Clear interval
-        if ((window as any).__findag_connection_interval) {
-          clearInterval((window as any).__findag_connection_interval);
-        }
-      },
-    })),
-    {
-      name: 'findag-store',
+  // UI Actions
+  setUI: (ui) => set((state) => ({ ui: { ...state.ui, ...ui } })),
+
+  // Connection Actions
+  setConnectionStatus: (status) => set({ connectionStatus: status }),
+
+  // Data Actions
+  setNetworkMetrics: (metrics) => set({ networkMetrics: metrics }),
+  setNodeMetrics: (metrics) => set({ nodeMetrics: metrics }),
+  addBlock: (block) => set((state) => ({ 
+    recentBlocks: [block, ...state.recentBlocks.slice(0, 99)] 
+  })),
+  addTransaction: (transaction) => set((state) => ({ 
+    recentTransactions: [transaction, ...state.recentTransactions.slice(0, 99)] 
+  })),
+  setCurrentRound: (round) => set({ currentRound: round }),
+  setValidators: (validators) => set({ validators }),
+
+  // Loading Actions
+  setLoading: (key, loading) => set((state) => ({
+    isLoading: { ...state.isLoading, [key]: loading }
+  })),
+
+  // Error Actions
+  setError: (key, error) => set((state) => ({
+    errors: { ...state.errors, [key]: error }
+  })),
+  clearErrors: () => set({ errors: {} }),
+
+  // API Actions - Real Backend Integration
+  fetchNetworkMetrics: async () => {
+    const { setLoading, setError, setNetworkMetrics } = get();
+    
+    setLoading('networkMetrics', true);
+    setError('networkMetrics');
+    
+    try {
+      const metrics = await finDAGApi.getNetworkMetrics();
+      setNetworkMetrics(metrics);
+    } catch (error: any) {
+      console.error('Failed to fetch network metrics:', error);
+      setError('networkMetrics', error.message || 'Failed to fetch network metrics');
+    } finally {
+      setLoading('networkMetrics', false);
     }
-  )
-); 
+  },
+
+  fetchNodeMetrics: async () => {
+    const { setLoading, setError, setNodeMetrics } = get();
+    
+    setLoading('nodeMetrics', true);
+    setError('nodeMetrics');
+    
+    try {
+      const metrics = await finDAGApi.getNodeMetrics();
+      setNodeMetrics(metrics);
+    } catch (error: any) {
+      console.error('Failed to fetch node metrics:', error);
+      setError('nodeMetrics', error.message || 'Failed to fetch node metrics');
+    } finally {
+      setLoading('nodeMetrics', false);
+    }
+  },
+
+  fetchRecentBlocks: async () => {
+    const { setLoading, setError, addBlock } = get();
+    
+    setLoading('blocks', true);
+    setError('blocks');
+    
+    try {
+      const response = await finDAGApi.getBlocks(1, 10);
+      // Clear existing blocks and add new ones
+      set({ recentBlocks: response.data });
+    } catch (error: any) {
+      console.error('Failed to fetch recent blocks:', error);
+      setError('blocks', error.message || 'Failed to fetch recent blocks');
+    } finally {
+      setLoading('blocks', false);
+    }
+  },
+
+  fetchRecentTransactions: async () => {
+    const { setLoading, setError, addTransaction } = get();
+    
+    setLoading('transactions', true);
+    setError('transactions');
+    
+    try {
+      const response = await finDAGApi.getTransactions(1, 10);
+      // Clear existing transactions and add new ones
+      set({ recentTransactions: response.data });
+    } catch (error: any) {
+      console.error('Failed to fetch recent transactions:', error);
+      setError('transactions', error.message || 'Failed to fetch recent transactions');
+    } finally {
+      setLoading('transactions', false);
+    }
+  },
+
+  fetchValidators: async () => {
+    const { setLoading, setError, setValidators } = get();
+    
+    setLoading('validators', true);
+    setError('validators');
+    
+    try {
+      const validators = await finDAGApi.getValidators();
+      setValidators(validators);
+    } catch (error: any) {
+      console.error('Failed to fetch validators:', error);
+      setError('validators', error.message || 'Failed to fetch validators');
+    } finally {
+      setLoading('validators', false);
+    }
+  },
+
+  connectWebSocket: () => {
+    const { setConnectionStatus } = get();
+    
+    setConnectionStatus('connecting');
+    
+    try {
+      finDAGApi.connectWebSocket();
+      
+      // Listen for connection status updates
+      finDAGApi.addEventListener('connection_status', (event) => {
+        const status = event.data.status;
+        setConnectionStatus(status === 'connected' ? 'connected' : 'disconnected');
+        set({ isConnected: status === 'connected' });
+      });
+
+      // Listen for real-time data updates
+      finDAGApi.addEventListener('block', (event) => {
+        get().addBlock(event.data);
+      });
+
+      finDAGApi.addEventListener('transaction', (event) => {
+        get().addTransaction(event.data);
+      });
+
+      finDAGApi.addEventListener('round', (event) => {
+        get().setCurrentRound(event.data);
+      });
+
+      finDAGApi.addEventListener('metrics', (event) => {
+        // Update node metrics with real-time data
+        const { nodeMetrics } = get();
+        const updatedMetrics = nodeMetrics.map(metric => 
+          metric.nodeId === event.data.nodeId ? { ...metric, ...event.data } : metric
+        );
+        set({ nodeMetrics: updatedMetrics });
+      });
+
+      // Set up periodic health checks
+      const checkConnection = () => {
+        const isConnected = finDAGApi.isConnected();
+        const status = finDAGApi.getConnectionStatus();
+        set({ isConnected, connectionStatus: status });
+        
+        if (!isConnected && status === 'disconnected') {
+          // Attempt to reconnect
+          setTimeout(() => {
+            finDAGApi.connectWebSocket();
+          }, 5000);
+        }
+      };
+
+      // Check connection every 30 seconds
+      const interval = setInterval(checkConnection, 30000);
+      
+      // Store interval for cleanup
+      set({ connectionCheckInterval: interval });
+
+    } catch (error) {
+      console.error('Failed to connect WebSocket:', error);
+      setConnectionStatus('disconnected');
+    }
+  },
+
+  disconnectWebSocket: () => {
+    const { setConnectionStatus } = get();
+    
+    try {
+      finDAGApi.disconnectWebSocket();
+      setConnectionStatus('disconnected');
+      set({ isConnected: false });
+      
+      // Clear connection check interval
+      const { connectionCheckInterval } = get();
+      if (connectionCheckInterval) {
+        clearInterval(connectionCheckInterval);
+        set({ connectionCheckInterval: undefined });
+      }
+    } catch (error) {
+      console.error('Failed to disconnect WebSocket:', error);
+    }
+  },
+}));
+
+// Export all stores
+export { useAuthStore } from './auth';
+export { useDemoStore } from './demo';
+export { useTradingStore } from './trading';

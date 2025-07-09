@@ -23,6 +23,7 @@
     "clsx": "^1.2.1",
     "tailwind-merge": "^1.13.2",
     "date-fns": "^2.30.0",
+    "date-fns-tz": "^2.0.0",
     "react-query": "^3.39.3",
     "socket.io-client": "^4.7.2"
   },

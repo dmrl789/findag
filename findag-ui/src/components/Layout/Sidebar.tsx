@@ -14,6 +14,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { useAppStore } from '../../store';
+import { useAuthStore } from '../../store/auth';
 
 const navigationItems = [
   {
@@ -21,72 +22,95 @@ const navigationItems = [
     href: '/',
     icon: Activity,
     description: 'Network overview and metrics',
+    permission: 'dashboard:read',
+    roles: ['admin', 'user', 'validator'],
   },
   {
     name: 'Trading',
     href: '/trading',
     icon: TrendingUp,
     description: 'Real-time price charts and trading',
+    permission: 'trading:read',
+    roles: ['admin', 'user', 'validator'],
   },
   {
     name: 'DAG Explorer',
     href: '/dag',
     icon: Blocks,
     description: 'Visual DAG structure',
+    permission: 'network:read',
+    roles: ['admin', 'user', 'validator'],
   },
   {
     name: 'Transactions',
     href: '/transactions',
     icon: Zap,
     description: 'Transaction history and details',
+    permission: 'transactions:read',
+    roles: ['admin', 'user', 'validator'],
   },
   {
     name: 'Validators',
     href: '/validators',
     icon: Users,
     description: 'Validator management and status',
+    permission: 'validators:read',
+    roles: ['admin', 'validator'],
   },
   {
     name: 'Rounds',
     href: '/rounds',
     icon: Clock,
     description: 'Round finalization and history',
+    permission: 'rounds:read',
+    roles: ['admin', 'validator'],
   },
   {
     name: 'Network',
     href: '/network',
     icon: Network,
     description: 'P2P network topology',
+    permission: 'network:read',
+    roles: ['admin', 'user', 'validator'],
   },
   {
     name: 'Metrics',
     href: '/metrics',
     icon: BarChart3,
     description: 'Performance analytics',
+    permission: 'metrics:read',
+    roles: ['admin', 'user', 'validator'],
   },
   {
     name: 'Storage',
     href: '/storage',
     icon: Database,
     description: 'Blockchain storage status',
+    permission: 'system:read',
+    roles: ['admin'],
   },
   {
     name: 'Security',
     href: '/security',
     icon: Shield,
     description: 'Security and compliance',
+    permission: 'system:read',
+    roles: ['admin'],
   },
   {
     name: 'Settings',
     href: '/settings',
     icon: Settings,
     description: 'Application configuration',
+    permission: 'system:read',
+    roles: ['admin'],
   },
 ];
 
 export const Sidebar: React.FC = () => {
   const location = useLocation();
   const { connectionStatus } = useAppStore();
+  const { user, hasPermission, hasRole } = useAuthStore();
 
   const getStatusColor = () => {
     switch (connectionStatus) {
@@ -114,6 +138,21 @@ export const Sidebar: React.FC = () => {
     }
   };
 
+  // Filter navigation items based on user permissions
+  const filteredNavigationItems = navigationItems.filter(item => {
+    // Check if user has the required permission
+    if (item.permission && !hasPermission(item.permission)) {
+      return false;
+    }
+    
+    // Check if user has one of the required roles
+    if (item.roles && !item.roles.some(role => hasRole(role))) {
+      return false;
+    }
+    
+    return true;
+  });
+
   return (
     <div className="flex flex-col w-64 bg-white border-r border-gray-200 h-full">
       {/* Header */}
@@ -137,9 +176,30 @@ export const Sidebar: React.FC = () => {
         </div>
       </div>
 
+      {/* User Info */}
+      {user && (
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center">
+              <span className="text-white font-medium text-sm">
+                {user.username.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 truncate">
+                {user.username}
+              </p>
+              <p className="text-xs text-gray-500 capitalize">
+                {user.role}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {navigationItems.map((item) => {
+        {filteredNavigationItems.map((item) => {
           const isActive = location.pathname === item.href || 
                           (item.href === '/trading' && location.pathname.startsWith('/trading'));
           const Icon = item.icon;
@@ -171,6 +231,11 @@ export const Sidebar: React.FC = () => {
         <div className="text-xs text-gray-500">
           <p>FinDAG v1.0.0</p>
           <p>High-performance blockchain</p>
+          {user && (
+            <p className="mt-1 text-xs text-gray-400">
+              Logged in as {user.role}
+            </p>
+          )}
         </div>
       </div>
     </div>

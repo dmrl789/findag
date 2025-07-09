@@ -86,6 +86,6 @@ Write-Host "\n🎉 Multi-Node Demo is Running!" -ForegroundColor Green
 Write-Host "=====================================" -ForegroundColor Green
 Write-Host "\n📊 Node logs: logs/node1.log, logs/node2.log, logs/node3.log" -ForegroundColor White
 Write-Host "🤖 Bot logs: logs/bot1.log, logs/bot2.log, logs/bot3.log" -ForegroundColor White
-Write-Host "\n🔍 Monitor blocks, rounds, and transactions in the log files." -ForegroundColor Cyan
-Write-Host "\n⏹️  To stop everything: taskkill /F /IM findag.exe; taskkill /F /IM transaction_bot.exe" -ForegroundColor Red
-Write-Host "\n" 
+Write-Host "Monitor blocks, rounds, and transactions in the log files." -ForegroundColor Cyan
+Write-Host "To stop everything: taskkill /F /IM findag.exe; taskkill /F /IM transaction_bot.exe" -ForegroundColor Red
+Write-Host "" 

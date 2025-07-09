@@ -6,9 +6,11 @@ export interface FinDAGTime {
 
 export interface Block {
   id: string;
+  number: number;
   parentIds: string[];
   timestamp: FinDAGTime;
   transactions: Transaction[];
+  transactionCount: number;
   validator: string;
   round: number;
   hash: string;
@@ -17,6 +19,7 @@ export interface Block {
 
 export interface Transaction {
   id: string;
+  hash: string;
   from: string;
   to: string;
   amount: number;
@@ -120,6 +123,7 @@ export interface Round {
   endTime?: number;
   validators: string[];
   finalizedBlocks: string[];
+  transactionCount: number;
   status: 'active' | 'finalized' | 'failed';
 }
 
@@ -142,6 +146,14 @@ export interface NetworkMetrics {
   totalTransactions: number;
   finalizedBlocks: number;
   currentRound: number;
+  // Additional metrics for dashboard
+  activeValidators: number;
+  transactionGrowth: number;
+  validatorGrowth: number;
+  hashRate: number;
+  hashRateGrowth: number;
+  averageBlockTime: number;
+  blockTimeChange: number;
 }
 
 // API Response Types
