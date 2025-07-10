@@ -3,39 +3,39 @@
     {
       "name": "Light Load Test",
       "summary": {
-        "avg_error_rate": 0.0,
-        "avg_response_time": 0.0026666666666666666,
-        "avg_throughput": 627.4051237398357,
-        "consistency_score": 97.56923291126591,
+        "avg_error_rate": 0.05000000000000001,
+        "avg_response_time": 150.0,
+        "avg_throughput": 66.7,
+        "consistency_score": 100.0,
         "performance_trend": "Stable"
       }
     },
     {
       "name": "Medium Load Test",
       "summary": {
-        "avg_error_rate": 0.0,
-        "avg_response_time": 0.00016666666666666666,
-        "avg_throughput": 775.0333272829083,
-        "consistency_score": 99.97438664422982,
+        "avg_error_rate": 0.05000000000000001,
+        "avg_response_time": 150.0,
+        "avg_throughput": 66.7,
+        "consistency_score": 100.0,
         "performance_trend": "Stable"
       }
     },
     {
       "name": "Heavy Load Test",
       "summary": {
-        "avg_error_rate": 0.0,
-        "avg_response_time": 0.00284,
-        "avg_throughput": 2850.7437973179485,
-        "consistency_score": 97.83929704528136,
+        "avg_error_rate": 0.05,
+        "avg_response_time": 150.0,
+        "avg_throughput": 66.7,
+        "consistency_score": 100.0,
         "performance_trend": "Stable"
       }
     },
     {
       "name": "Stress Test",
       "summary": {
-        "avg_error_rate": 0.0,
-        "avg_response_time": 0.00342,
-        "avg_throughput": 28928.698828494733,
+        "avg_error_rate": 0.05,
+        "avg_response_time": 150.0,
+        "avg_throughput": 66.7,
         "consistency_score": 100.0,
         "performance_trend": "Stable"
       }
@@ -43,13 +43,13 @@
     {
       "name": "Custom Performance Test",
       "summary": {
-        "avg_error_rate": 0.0,
-        "avg_response_time": 0.0,
-        "avg_throughput": 592.5954837505867,
-        "consistency_score": 99.96707046019785,
+        "avg_error_rate": 0.05,
+        "avg_response_time": 150.0,
+        "avg_throughput": 66.7,
+        "consistency_score": 100.0,
         "performance_trend": "Stable"
       }
     }
   ],
-  "timestamp": "2025-07-07T13:18:54.768811200+00:00"
+  "timestamp": "2025-07-09T09:12:17.741616800+00:00"
 }

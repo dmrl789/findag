@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AdvancedTradingView } from './AdvancedTradingView';
 import { PricePoint, Trade, OrderBook } from '../../types';
+import { finDAGApi } from '../../services/api';
+import { useNotifications, createNotification } from '../Common/NotificationSystem';
 
 interface TradingViewProps {
   pair: string;
@@ -11,134 +13,189 @@ export const TradingView: React.FC<TradingViewProps> = ({ pair }) => {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [orderBook, setOrderBook] = useState<OrderBook | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
 
-  // Mock data - in real app this would come from API
+  const { addNotification } = useNotifications();
+
+  // Load initial data from backend
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      
-      // Generate mock price data
-      const mockPriceData: PricePoint[] = [];
-      const now = Date.now();
-      const basePrice = 50000;
-      
-      for (let i = 100; i >= 0; i--) {
-        const timestamp = now - (i * 60 * 1000); // 1 minute intervals
-        const price = basePrice + (Math.random() - 0.5) * 1000;
-        const volume = Math.random() * 100 + 10;
+      setError(null);
+
+      try {
+        // Load price history, recent trades, and order book from backend
+        const [priceHistory, recentTrades, orderBookData] = await Promise.all([
+          finDAGApi.getPriceHistory(pair, '1h', 1000),
+          finDAGApi.getRecentTrades(pair, 100),
+          finDAGApi.getOrderBook(pair, 20)
+        ]);
+
+        setPriceData(priceHistory);
+        setTrades(recentTrades);
+        setOrderBook(orderBookData);
+
+        addNotification(createNotification.success(
+          'Data Loaded',
+          `Successfully loaded trading data for ${pair}`,
+          { category: 'trading' }
+        ));
+      } catch (error: any) {
+        const errorMessage = error.message || 'Failed to load trading data';
+        setError(errorMessage);
         
-        mockPriceData.push({
-          timestamp,
-          price,
-          volume,
-          high: price + Math.random() * 50,
-          low: price - Math.random() * 50,
-          open: price + (Math.random() - 0.5) * 20,
-          close: price,
-        });
+        addNotification(createNotification.error(
+          'Data Load Error',
+          errorMessage,
+          { category: 'trading' }
+        ));
+      } finally {
+        setLoading(false);
       }
-      
-      setPriceData(mockPriceData);
-
-      // Generate mock trades
-      const mockTrades: Trade[] = [];
-      for (let i = 0; i < 20; i++) {
-        mockTrades.push({
-          id: `trade_${i}`,
-          pair,
-          price: basePrice + (Math.random() - 0.5) * 100,
-          amount: Math.random() * 2 + 0.1,
-          side: Math.random() > 0.5 ? 'buy' : 'sell',
-          timestamp: now - Math.random() * 3600000,
-          maker: `user_${Math.floor(Math.random() * 1000)}`,
-          taker: `user_${Math.floor(Math.random() * 1000)}`,
-          fee: Math.random() * 10,
-        });
-      }
-      setTrades(mockTrades);
-
-      // Generate mock order book
-      const mockOrderBook: OrderBook = {
-        pair,
-        bids: [],
-        asks: [],
-        lastUpdateId: now,
-      };
-
-      // Generate bids
-      for (let i = 0; i < 20; i++) {
-        const price = basePrice - (i * 10);
-        const amount = Math.random() * 2 + 0.1;
-        const total = mockOrderBook.bids.length > 0 
-          ? mockOrderBook.bids[mockOrderBook.bids.length - 1].total + amount
-          : amount;
-        
-        mockOrderBook.bids.push({ price, amount, total });
-      }
-
-      // Generate asks
-      for (let i = 0; i < 20; i++) {
-        const price = basePrice + (i * 10);
-        const amount = Math.random() * 2 + 0.1;
-        const total = mockOrderBook.asks.length > 0 
-          ? mockOrderBook.asks[mockOrderBook.asks.length - 1].total + amount
-          : amount;
-        
-        mockOrderBook.asks.push({ price, amount, total });
-      }
-
-      mockOrderBook.bids.sort((a, b) => b.price - a.price);
-      mockOrderBook.asks.sort((a, b) => a.price - b.price);
-      setOrderBook(mockOrderBook);
-
-      setLoading(false);
     };
 
     loadData();
-  }, [pair]);
-
-  const handleRefresh = async () => {
-    setLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setLoading(false);
-  };
+  }, [pair, addNotification]);
 
   // WebSocket connection for real-time updates
   useEffect(() => {
+    // Connect to WebSocket
+    finDAGApi.connectWebSocket();
+    
+    // Subscribe to real-time data for this pair
+    finDAGApi.subscribeToPair(pair);
+
+    // Set up event listeners for real-time updates
     const handlePriceUpdate = (event: any) => {
-      // Handle real-time price updates
-      console.log('Price update:', event);
+      if (event.data && event.data.pair === pair) {
+        setPriceData(prev => [...prev.slice(-999), event.data]);
+        
+        addNotification(createNotification.info(
+          'Price Update',
+          `${pair} price: ${event.data.price}`,
+          { category: 'trading', priority: 'low' }
+        ));
+      }
     };
 
     const handleTradeUpdate = (event: any) => {
-      // Handle real-time trade updates
-      console.log('Trade update:', event);
+      if (event.data && event.data.pair === pair) {
+        setTrades(prev => [event.data, ...prev.slice(0, 99)]);
+        
+        addNotification(createNotification.trade(
+          'Trade Executed',
+          `${event.data.side.toUpperCase()} ${event.data.amount} ${pair} at ${event.data.price}`,
+          { category: 'trading' }
+        ));
+      }
     };
 
     const handleOrderBookUpdate = (event: any) => {
-      // Handle real-time order book updates
-      console.log('Order book update:', event);
+      if (event.data && event.data.pair === pair) {
+        setOrderBook(event.data);
+      }
     };
 
-    // In real app, this would connect to WebSocket
-    // For now, we'll just log the handlers
-    console.log('WebSocket handlers set up');
+    const handleConnectionStatus = (event: any) => {
+      setConnectionStatus(event.data.status);
+      
+      if (event.data.status === 'connected') {
+        addNotification(createNotification.success(
+          'Connected',
+          'Real-time connection established',
+          { category: 'system' }
+        ));
+      } else if (event.data.status === 'disconnected') {
+        addNotification(createNotification.warning(
+          'Disconnected',
+          'Real-time connection lost',
+          { category: 'system' }
+        ));
+      }
+    };
+
+    // Add event listeners
+    finDAGApi.addEventListener('price', handlePriceUpdate);
+    finDAGApi.addEventListener('trade', handleTradeUpdate);
+    finDAGApi.addEventListener('orderbook', handleOrderBookUpdate);
+    finDAGApi.addEventListener('connection_status', handleConnectionStatus);
 
     return () => {
-      // Cleanup WebSocket connection
-      console.log('WebSocket cleanup');
+      // Cleanup WebSocket connection and event listeners
+      finDAGApi.removeEventListener('price', handlePriceUpdate);
+      finDAGApi.removeEventListener('trade', handleTradeUpdate);
+      finDAGApi.removeEventListener('orderbook', handleOrderBookUpdate);
+      finDAGApi.removeEventListener('connection_status', handleConnectionStatus);
+      finDAGApi.unsubscribeFromPair(pair);
     };
-  }, [pair]);
+  }, [pair, addNotification]);
+
+  const handleRefresh = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Reload data from backend
+      const [priceHistory, recentTrades, orderBookData] = await Promise.all([
+        finDAGApi.getPriceHistory(pair, '1h', 1000),
+        finDAGApi.getRecentTrades(pair, 100),
+        finDAGApi.getOrderBook(pair, 20)
+      ]);
+
+      setPriceData(priceHistory);
+      setTrades(recentTrades);
+      setOrderBook(orderBookData);
+
+      addNotification(createNotification.success(
+        'Data Refreshed',
+        `Successfully refreshed trading data for ${pair}`,
+        { category: 'trading' }
+      ));
+    } catch (error: any) {
+      const errorMessage = error.message || 'Failed to refresh data';
+      setError(errorMessage);
+      
+      addNotification(createNotification.error(
+        'Refresh Error',
+        errorMessage,
+        { category: 'trading' }
+      ));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleTimeFrameChange = (newTimeFrame: string) => {
-    console.log('Time frame changed:', newTimeFrame);
-    // In real app, this would fetch new data for the selected time frame
+    // Fetch new price data for the selected time frame
+    const loadPriceData = async () => {
+      try {
+        const newPriceData = await finDAGApi.getPriceHistory(pair, newTimeFrame, 1000);
+        setPriceData(newPriceData);
+        
+        addNotification(createNotification.info(
+          'Timeframe Changed',
+          `Chart timeframe updated to ${newTimeFrame}`,
+          { category: 'trading' }
+        ));
+      } catch (error: any) {
+        addNotification(createNotification.error(
+          'Timeframe Error',
+          'Failed to load data for new timeframe',
+          { category: 'trading' }
+        ));
+      }
+    };
+
+    loadPriceData();
   };
 
   const handleChartTypeChange = (newChartType: string) => {
-    console.log('Chart type changed:', newChartType);
-    // In real app, this would update the chart type
+    addNotification(createNotification.info(
+      'Chart Type Changed',
+      `Chart type updated to ${newChartType}`,
+      { category: 'trading' }
+    ));
   };
 
   return (

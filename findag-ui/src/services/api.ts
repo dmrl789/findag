@@ -1,5 +1,9 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { io, Socket } from 'socket.io-client';
+import { errorHandler, ErrorType } from '../utils/errorHandler';
+import { SecurityHeaders, CSRFProtection, RateLimiter } from '../utils/security';
+import { cache } from '../utils/cache';
+import { withPerformanceTracking } from '../components/Common/PerformanceMonitor';
 import {
   Block,
   Transaction,
@@ -148,6 +152,86 @@ class FinDAGApi {
     }
   }
 
+  async register(username: string, email: string, password: string, confirmPassword: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.http.post('/auth/register', { 
+        username, 
+        email, 
+        password, 
+        confirm_password: confirmPassword 
+      });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Registration failed');
+    }
+  }
+
+  async passwordReset(email: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.http.post('/auth/password-reset', { email });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Password reset failed');
+    }
+  }
+
+  async passwordResetConfirm(token: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.http.post(`/auth/password-reset/${token}`, { new_password: newPassword });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Password reset confirmation failed');
+    }
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.http.post('/auth/change-password', { 
+        current_password: currentPassword, 
+        new_password: newPassword 
+      });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Password change failed');
+    }
+  }
+
+  async setup2FA(): Promise<{ secret: string; qr_url: string; message: string }> {
+    try {
+      const response = await this.http.post('/auth/2fa/setup');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, '2FA setup failed');
+    }
+  }
+
+  async enable2FA(secret: string, code: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.http.post('/auth/2fa/enable', { secret, code });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, '2FA enable failed');
+    }
+  }
+
+  async disable2FA(code: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.http.post('/auth/2fa/disable', { code });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, '2FA disable failed');
+    }
+  }
+
+  async verify2FA(secret: string, code: string): Promise<{ valid: boolean; message: string }> {
+    try {
+      const response = await this.http.post('/auth/2fa/verify', { secret, code });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, '2FA verification failed');
+    }
+  }
+
   logout(): void {
     this.authToken = null;
     localStorage.removeItem('auth_token');
@@ -161,32 +245,51 @@ class FinDAGApi {
 
   // HTTP API Methods - Core Blockchain (Updated to match backend)
   async getNetworkMetrics(): Promise<NetworkMetrics> {
+    const cacheKey = 'network_metrics';
+    const cached = cache.get(cacheKey) as NetworkMetrics | null;
+    if (cached) {
+      return cached;
+    }
+
+    const trackedMethod = withPerformanceTracking(
+      async () => {
+        try {
+          // Get validators and health status from backend
+          const [validators, health] = await Promise.all([
+            this.getValidators(),
+            this.getHealth(),
+          ]);
+
+          // Create network metrics from available data
+          const networkMetrics: NetworkMetrics = {
+            totalNodes: validators.length,
+            activeNodes: validators.filter(v => v.status === 'active').length,
+            totalTPS: 0, // Will be updated via WebSocket
+            averageLatency: 0, // Will be updated via WebSocket
+            totalTransactions: 0, // Will be updated via WebSocket
+            finalizedBlocks: 0, // Will be updated via WebSocket
+            currentRound: 0, // Will be updated via WebSocket
+            activeValidators: validators.filter(v => v.status === 'active').length,
+            transactionGrowth: 0,
+            validatorGrowth: 0,
+            hashRate: 0,
+            hashRateGrowth: 0,
+            averageBlockTime: 0,
+            blockTimeChange: 0,
+          };
+
+          return networkMetrics;
+        } catch (error) {
+          throw this.createApiError(error as AxiosError, 'Failed to fetch network metrics');
+        }
+      },
+      'GET /network/metrics'
+    );
+
     try {
-      // Get validators and health status from backend
-      const [validators, health] = await Promise.all([
-        this.getValidators(),
-        this.getHealth(),
-      ]);
-
-      // Create network metrics from available data
-      const networkMetrics: NetworkMetrics = {
-        totalNodes: validators.length,
-        activeNodes: validators.filter(v => v.status === 'active').length,
-        totalTPS: 0, // Will be updated via WebSocket
-        averageLatency: 0, // Will be updated via WebSocket
-        totalTransactions: 0, // Will be updated via WebSocket
-        finalizedBlocks: 0, // Will be updated via WebSocket
-        currentRound: 0, // Will be updated via WebSocket
-        activeValidators: validators.filter(v => v.status === 'active').length,
-        transactionGrowth: 0,
-        validatorGrowth: 0,
-        hashRate: 0,
-        hashRateGrowth: 0,
-        averageBlockTime: 0,
-        blockTimeChange: 0,
-      };
-
-      return networkMetrics;
+      const data = await trackedMethod();
+      cache.set(cacheKey, data, 30000); // Cache for 30 seconds
+      return data;
     } catch (error) {
       throw this.createApiError(error as AxiosError, 'Failed to fetch network metrics');
     }
@@ -584,39 +687,345 @@ class FinDAGApi {
     }
   }
 
-  async placeOrder(order: Omit<MarketOrder, 'id' | 'timestamp' | 'status' | 'filledAmount' | 'averagePrice'>): Promise<MarketOrder> {
+  // Wallet Integration Methods
+  async connectWallet(): Promise<{ address: string; message: string }> {
     try {
-      // Mock order placement since backend doesn't have trading endpoints yet
-      const placedOrder: MarketOrder = {
-        ...order,
-        id: `order-${Date.now()}`,
-        timestamp: Date.now(),
-        status: 'pending',
-        filledAmount: 0,
-        averagePrice: 0,
-      };
-      
-      // Simulate order processing
-      setTimeout(() => {
-        this.emitEvent('order_update', {
-          type: 'order_update',
-          data: { ...placedOrder, status: 'filled' },
-          timestamp: Date.now(),
-        });
-      }, 1000);
+      const response = await this.http.post('/wallet/connect');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Wallet connection failed');
+    }
+  }
 
-      return placedOrder;
+  async getWalletBalance(): Promise<{ balances: Array<{ asset: string; amount: number }>; message: string }> {
+    try {
+      const response = await this.http.get('/wallet/balance');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch wallet balance');
+    }
+  }
+
+  async getTransactionHistory(params?: { page?: number; limit?: number; asset?: string }): Promise<{
+    transactions: Array<{
+      tx_hash: string;
+      from: string;
+      to: string;
+      amount: number;
+      asset: string;
+      timestamp: number;
+      status: string;
+      fee: number;
+    }>;
+    total: number;
+    message: string;
+  }> {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params?.page) queryParams.append('page', params.page.toString());
+      if (params?.limit) queryParams.append('limit', params.limit.toString());
+      if (params?.asset) queryParams.append('asset', params.asset);
+      
+      const response = await this.http.get(`/wallet/transactions?${queryParams.toString()}`);
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch transaction history');
+    }
+  }
+
+  async depositFunds(amount: number, asset: string, externalAddress?: string): Promise<{
+    tx_hash: string;
+    status: string;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.post('/wallet/deposit', {
+        amount,
+        asset,
+        external_address: externalAddress
+      });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Deposit failed');
+    }
+  }
+
+  async withdrawFunds(amount: number, asset: string, externalAddress: string): Promise<{
+    tx_hash: string;
+    status: string;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.post('/wallet/withdraw', {
+        amount,
+        asset,
+        external_address: externalAddress
+      });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Withdrawal failed');
+    }
+  }
+
+  async getWalletAddresses(): Promise<{
+    addresses: Array<{ address: string; label: string; is_active: boolean }>;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get('/wallet/addresses');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch wallet addresses');
+    }
+  }
+
+  async generateWalletAddress(label?: string): Promise<{ address: string; message: string }> {
+    try {
+      const response = await this.http.post('/wallet/addresses', { label });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to generate wallet address');
+    }
+  }
+
+  // Trading Operations Methods
+  async placeOrder(order: {
+    symbol: string;
+    side: string;
+    order_type: string;
+    quantity: number;
+    price?: number;
+    client_order_id?: string;
+    currency?: string;
+  }): Promise<{ order_id: string; status: string; message: string }> {
+    try {
+      const response = await this.http.post('/orders', order);
+      return response.data;
     } catch (error) {
       throw this.createApiError(error as AxiosError, 'Failed to place order');
     }
   }
 
-  async cancelOrder(orderId: string): Promise<{ success: boolean }> {
+  async cancelOrder(orderId: string): Promise<{ success: boolean; message: string }> {
     try {
-      // Mock order cancellation since backend doesn't have trading endpoints yet
-      return { success: true };
+      const response = await this.http.delete(`/orders/${orderId}`);
+      return response.data;
     } catch (error) {
       throw this.createApiError(error as AxiosError, 'Failed to cancel order');
+    }
+  }
+
+  async getOrderHistory(params?: { page?: number; limit?: number; status?: string }): Promise<{
+    orders: Array<{
+      order_id: string;
+      symbol: string;
+      side: string;
+      order_type: string;
+      quantity: number;
+      price?: number;
+      status: string;
+      filled_quantity: number;
+      average_price: number;
+      created_at: number;
+      updated_at: number;
+    }>;
+    total: number;
+    message: string;
+  }> {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params?.page) queryParams.append('page', params.page.toString());
+      if (params?.limit) queryParams.append('limit', params.limit.toString());
+      if (params?.status) queryParams.append('status', params.status);
+      
+      const response = await this.http.get(`/orders?${queryParams.toString()}`);
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch order history');
+    }
+  }
+
+  async getTradeHistory(params?: { page?: number; limit?: number; symbol?: string }): Promise<{
+    trades: Array<{
+      trade_id: string;
+      order_id: string;
+      symbol: string;
+      side: string;
+      quantity: number;
+      price: number;
+      fee: number;
+      timestamp: number;
+    }>;
+    total: number;
+    message: string;
+  }> {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params?.page) queryParams.append('page', params.page.toString());
+      if (params?.limit) queryParams.append('limit', params.limit.toString());
+      if (params?.symbol) queryParams.append('symbol', params.symbol);
+      
+      const response = await this.http.get(`/trades?${queryParams.toString()}`);
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch trade history');
+    }
+  }
+
+  async getPositions(): Promise<{
+    positions: Array<{
+      symbol: string;
+      side: string;
+      quantity: number;
+      average_price: number;
+      current_price: number;
+      unrealized_pnl: number;
+      realized_pnl: number;
+      margin_used: number;
+      leverage: number;
+    }>;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get('/positions');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch positions');
+    }
+  }
+
+  // DAG Operations Methods
+  async submitDagTransaction(transaction: {
+    from: string;
+    to: string;
+    amount: number;
+    asset: string;
+    purpose?: string;
+    shard_id?: number;
+  }): Promise<{ tx_hash: string; block_id: string; status: string; message: string }> {
+    try {
+      const response = await this.http.post('/dag/submit-transaction', transaction);
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to submit DAG transaction');
+    }
+  }
+
+  // Analytics & Reporting Methods
+  async getTradingAnalytics(): Promise<{
+    total_volume: number;
+    total_trades: number;
+    win_rate: number;
+    profit_loss: number;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get('/analytics/trading');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch trading analytics');
+    }
+  }
+
+  async getPerformanceMetrics(): Promise<{
+    avg_latency_ms: number;
+    max_throughput: number;
+    uptime_hours: number;
+    error_rate: number;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get('/analytics/performance');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch performance metrics');
+    }
+  }
+
+  async getPerformanceMetricsTimeSeries(timeRange: string = '24h'): Promise<{
+    tps: Array<{ timestamp: number; value: number }>;
+    latency: Array<{ timestamp: number; value: number }>;
+    nodes: Array<{ timestamp: number; value: number }>;
+    blocks: Array<{ timestamp: number; value: number }>;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get(`/analytics/performance/timeseries?range=${timeRange}`);
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch time-series performance metrics');
+    }
+  }
+
+  async getRiskAnalysis(): Promise<{
+    value_at_risk: number;
+    max_drawdown: number;
+    exposure: number;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get('/analytics/risk');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch risk analysis');
+    }
+  }
+
+  async getPortfolioReport(): Promise<{
+    holdings: Array<{ asset: string; amount: number; value: number }>;
+    total_value: number;
+    returns_pct: number;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get('/analytics/portfolio');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch portfolio report');
+    }
+  }
+
+  async getMarketAnalysis(): Promise<{
+    price_trend: string;
+    volatility: number;
+    liquidity: number;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get('/analytics/market');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch market analysis');
+    }
+  }
+
+  // Real-time Data Methods
+  async subscribeRealtime(channels: string[]): Promise<{
+    success: boolean;
+    channels: string[];
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get('/realtime/subscribe', {
+        params: { channels: channels.join(',') }
+      });
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to subscribe to real-time data');
+    }
+  }
+
+  async getRealtimeStatus(): Promise<{
+    active_connections: number;
+    uptime_seconds: number;
+    status: string;
+    message: string;
+  }> {
+    try {
+      const response = await this.http.get('/realtime/status');
+      return response.data;
+    } catch (error) {
+      throw this.createApiError(error as AxiosError, 'Failed to fetch real-time status');
     }
   }
 

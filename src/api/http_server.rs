@@ -27,6 +27,14 @@ use tower_http::cors::{CorsLayer, Any};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use std::time::{Duration, Instant};
+use uuid;
+use crate::api::websocket::{WebSocketManager, websocket_handler, WebSocketMessage};
+use otpauth::TOTP;
+use base32::encode as base32_encode;
+use chrono::{DateTime, Utc};
+use rand::rngs::OsRng;
+use rand::Rng;
+use tokio::sync::RwLock;
 
 // Secure credential management
 static ADMIN_USERNAME: Lazy<String> = Lazy::new(|| {
@@ -70,6 +78,7 @@ pub struct AppState {
     pub governance_state: Arc<Mutex<crate::consensus::governance::GovernanceState>>,
     pub tx_pool: Arc<ShardedTxPool>,
     pub network_propagator: Arc<NetworkPropagator>,
+    pub ws_manager: Arc<WebSocketManager>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -156,6 +165,72 @@ struct LoginRequest {
     password: String,
 }
 
+#[derive(Deserialize)]
+struct RegisterRequest {
+    username: String,
+    email: String,
+    password: String,
+    confirm_password: String,
+}
+
+#[derive(Deserialize)]
+struct PasswordResetRequest {
+    email: String,
+}
+
+#[derive(Deserialize)]
+struct PasswordResetConfirmRequest {
+    token: String,
+    new_password: String,
+}
+
+#[derive(Deserialize)]
+struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct User {
+    id: String,
+    username: String,
+    email: String,
+    password_hash: String,
+    role: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    last_login: Option<chrono::DateTime<chrono::Utc>>,
+    is_active: bool,
+    two_factor_enabled: bool,
+    two_factor_secret: Option<String>,
+}
+
+// In-memory user storage (replace with database in production)
+static USERS: Lazy<Arc<Mutex<HashMap<String, User>>>> = Lazy::new(|| {
+    let mut users = HashMap::new();
+    // Add default admin user
+    users.insert("admin".to_string(), User {
+        id: "admin".to_string(),
+        username: "admin".to_string(),
+        email: "admin@findag.com".to_string(),
+        password_hash: ADMIN_PASSWORD_HASH.clone(),
+        role: "admin".to_string(),
+        created_at: chrono::Utc::now(),
+        last_login: None,
+        is_active: true,
+        two_factor_enabled: false,
+        two_factor_secret: None,
+    });
+    Arc::new(Mutex::new(users))
+});
+
+// Password reset tokens (replace with database in production)
+static PASSWORD_RESET_TOKENS: Lazy<Arc<Mutex<HashMap<String, (String, chrono::DateTime<chrono::Utc>)>>>> = 
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+// User sessions (replace with database in production)
+static USER_SESSIONS: Lazy<Arc<Mutex<HashMap<String, (String, chrono::DateTime<chrono::Utc>)>>>> = 
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
 // Secure JWT validation with replay protection
 static USED_JWT_IDS: OnceLock<Arc<Mutex<HashMap<String, Instant>>>> = OnceLock::new();
 
@@ -230,6 +305,7 @@ fn hash_password(password: &str) -> String {
 }
 
 async fn authenticate_user(headers: HeaderMap, required_role: &str) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+    cleanup_expired_sessions();
     let auth_header = headers
         .get("authorization")
         .and_then(|h| h.to_str().ok())
@@ -256,6 +332,7 @@ async fn authenticate_user(headers: HeaderMap, required_role: &str) -> Result<St
 
 // Secure login with proper password validation
 async fn login(Json(credentials): Json<LoginRequest>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    cleanup_expired_sessions();
     // Sanitize inputs
     let username = credentials.username.trim();
     let password = credentials.password.trim();
@@ -274,23 +351,311 @@ async fn login(Json(credentials): Json<LoginRequest>) -> Result<Json<serde_json:
         }))));
     }
     
-    // Validate credentials
-    if username == *ADMIN_USERNAME && hash_password(password) == *ADMIN_PASSWORD_HASH {
-        let token = generate_jwt(username, "admin")
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to generate token"
-            }))))?;
+    // Get user from storage
+    let users = USERS.lock().unwrap();
+    if let Some(user) = users.get(username) {
+        if !user.is_active {
+            return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+                "error": "Account is deactivated"
+            }))));
+        }
         
-        audit_log(username, "login", "successful");
-        Ok(Json(serde_json::json!({
-            "token": token,
-            "role": "admin",
-            "expires_in": JWT_EXPIRY_HOURS * 3600
-        })))
+        if hash_password(password) == user.password_hash {
+            // Clone user data before dropping the lock
+            let user_role = user.role.clone();
+            let user_id = user.id.clone();
+            let user_email = user.email.clone();
+            let two_factor_enabled = user.two_factor_enabled;
+            
+            // Update last login
+            drop(users);
+            let mut users = USERS.lock().unwrap();
+            if let Some(user) = users.get_mut(username) {
+                user.last_login = Some(chrono::Utc::now());
+            }
+            
+            let token = generate_jwt(username, &user_role)
+                .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                    "error": "Failed to generate token"
+                }))))?;
+            
+            // Store session
+            let mut sessions = USER_SESSIONS.lock().unwrap();
+            sessions.insert(token.clone(), (username.to_string(), chrono::Utc::now()));
+            
+            audit_log(username, "login", "successful");
+            Ok(Json(serde_json::json!({
+                "token": token,
+                "role": user_role,
+                "expires_in": JWT_EXPIRY_HOURS * 3600,
+                "user": {
+                    "id": user_id,
+                    "username": username.to_string(),
+                    "email": user_email,
+                    "two_factor_enabled": two_factor_enabled
+                }
+            })))
+        } else {
+            audit_log(username, "login", "failed");
+            Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+                "error": "Invalid credentials"
+            }))))
+        }
     } else {
         audit_log(username, "login", "failed");
         Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({
             "error": "Invalid credentials"
+        }))))
+    }
+}
+
+// User registration endpoint
+async fn register(Json(req): Json<RegisterRequest>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Sanitize inputs
+    let username = req.username.trim();
+    let email = req.email.trim();
+    let password = req.password.trim();
+    let confirm_password = req.confirm_password.trim();
+    
+    // Validation
+    if username.is_empty() || email.is_empty() || password.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "All fields are required"
+        }))));
+    }
+    
+    if password != confirm_password {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Passwords do not match"
+        }))));
+    }
+    
+    if password.len() < 8 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Password must be at least 8 characters long"
+        }))));
+    }
+    
+    // Check if username or email already exists
+    let users = USERS.lock().unwrap();
+    if users.contains_key(username) {
+        return Err((StatusCode::CONFLICT, Json(serde_json::json!({
+            "error": "Username already exists"
+        }))));
+    }
+    
+    for user in users.values() {
+        if user.email == email {
+            return Err((StatusCode::CONFLICT, Json(serde_json::json!({
+                "error": "Email already exists"
+            }))));
+        }
+    }
+    
+    // Create new user
+    let new_user = User {
+        id: uuid::Uuid::new_v4().to_string(),
+        username: username.to_string(),
+        email: email.to_string(),
+        password_hash: hash_password(password),
+        role: "user".to_string(),
+        created_at: chrono::Utc::now(),
+        last_login: None,
+        is_active: true,
+        two_factor_enabled: false,
+        two_factor_secret: None,
+    };
+    
+    drop(users);
+    let mut users = USERS.lock().unwrap();
+    users.insert(username.to_string(), new_user.clone());
+    
+    audit_log(username, "register", "successful");
+    Ok(Json(serde_json::json!({
+        "message": "User registered successfully",
+        "user": {
+            "id": new_user.id,
+            "username": new_user.username,
+            "email": new_user.email,
+            "role": new_user.role
+        }
+    })))
+}
+
+// Password reset request endpoint
+async fn password_reset(Json(req): Json<PasswordResetRequest>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let email = req.email.trim();
+    
+    if email.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Email is required"
+        }))));
+    }
+    
+    // Find user by email
+    let users = USERS.lock().unwrap();
+    let user = users.values().find(|u| u.email == email);
+    
+    if let Some(user) = user {
+        // Clone username before dropping the lock
+        let username = user.username.clone();
+        
+        // Generate reset token
+        let token = uuid::Uuid::new_v4().to_string();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
+        
+        // Store reset token
+        drop(users);
+        let mut tokens = PASSWORD_RESET_TOKENS.lock().unwrap();
+        tokens.insert(token.clone(), (username.clone(), expires_at));
+        
+        // In production, send email here
+        audit_log(&username, "password_reset_requested", "successful");
+        
+        Ok(Json(serde_json::json!({
+            "message": "Password reset email sent (check logs in development)",
+            "token": token // Remove this in production
+        })))
+    } else {
+        // Don't reveal if email exists or not
+        Ok(Json(serde_json::json!({
+            "message": "If the email exists, a password reset link has been sent"
+        })))
+    }
+}
+
+// Password reset confirmation endpoint
+async fn password_reset_confirm(
+    Path(token): Path<String>,
+    Json(req): Json<PasswordResetConfirmRequest>
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let new_password = req.new_password.trim();
+    
+    if new_password.len() < 8 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Password must be at least 8 characters long"
+        }))));
+    }
+    
+    // Validate token
+    let tokens = PASSWORD_RESET_TOKENS.lock().unwrap();
+    if let Some((username, expires_at)) = tokens.get(&token) {
+        if chrono::Utc::now() > *expires_at {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": "Reset token has expired"
+            }))));
+        }
+        
+        // Clone username before dropping the lock
+        let username = username.clone();
+        
+        // Update user password
+        drop(tokens);
+        let mut users = USERS.lock().unwrap();
+        if let Some(user) = users.get_mut(&username) {
+            user.password_hash = hash_password(new_password);
+            
+            // Remove used token
+            let mut tokens = PASSWORD_RESET_TOKENS.lock().unwrap();
+            tokens.remove(&token);
+            
+            audit_log(&username, "password_reset_completed", "successful");
+            
+            Ok(Json(serde_json::json!({
+                "message": "Password reset successfully"
+            })))
+        } else {
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "error": "User not found"
+            }))))
+        }
+    } else {
+        Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Invalid reset token"
+        }))))
+    }
+}
+
+// Change password endpoint (requires authentication)
+async fn change_password(
+    headers: HeaderMap,
+    Json(req): Json<ChangePasswordRequest>
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Authenticate user
+    let username = authenticate_user(headers, "user").await?;
+    
+    let current_password = req.current_password.trim();
+    let new_password = req.new_password.trim();
+    
+    if new_password.len() < 8 {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Password must be at least 8 characters long"
+        }))));
+    }
+    
+    // Verify current password
+    let users = USERS.lock().unwrap();
+    if let Some(user) = users.get(&username) {
+        if hash_password(current_password) != user.password_hash {
+            return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+                "error": "Current password is incorrect"
+            }))));
+        }
+        
+        // Update password
+        drop(users);
+        let mut users = USERS.lock().unwrap();
+        if let Some(user) = users.get_mut(&username) {
+            user.password_hash = hash_password(new_password);
+            
+            audit_log(&username, "password_changed", "successful");
+            
+            Ok(Json(serde_json::json!({
+                "message": "Password changed successfully"
+            })))
+        } else {
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "error": "User not found"
+            }))))
+        }
+    } else {
+        Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "error": "User not found"
+        }))))
+    }
+}
+
+// Logout endpoint
+async fn logout(headers: HeaderMap) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Extract token from headers
+    if let Some(auth_header) = headers.get("authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if auth_str.starts_with("Bearer ") {
+                let token = auth_str[7..].to_string();
+                
+                // Remove from sessions
+                let mut sessions = USER_SESSIONS.lock().unwrap();
+                sessions.remove(&token);
+                
+                // Add to blacklist (optional, for immediate invalidation)
+                // In production, you might want to add this to a blacklist
+                
+                Ok(Json(serde_json::json!({
+                    "message": "Logged out successfully"
+                })))
+            } else {
+                Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                    "error": "Invalid authorization header"
+                }))))
+            }
+        } else {
+            Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": "Invalid authorization header"
+            }))))
+        }
+    } else {
+        Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Authorization header required"
         }))))
     }
 }
@@ -406,7 +771,7 @@ async fn get_balance(
     Path((address, asset)): Path<(String, String)>, 
     Query(params): Query<std::collections::HashMap<String, String>>
 ) -> Json<serde_json::Value> {
-    let shard_id = params.get("shard_id").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let shard_id = params.get("shard_id").and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
     let whitelist = vec!["EUR", "USD", "GBP", "JPY", "CHF", "SGD", "AED", "CNY", "BUND", "OAT", "BTP", "GILT", "UST", "JGB", "T-BILL", "CP", "CD", "XAU", "XAG", "XPT", "XPD", "XS1234567890", "FR0000120271", "BE0003796134", "DE0001135275", "ETF1", "UCITS1", "BTC", "ETH", "USDT", "USDC"];
     if !whitelist.contains(&asset.as_str()) {
         return Json(serde_json::json!({ "error": format!("'{}' is not a supported asset", asset) }));
@@ -1263,6 +1628,184 @@ async fn get_top_voters(
     })))
 }
 
+#[derive(Deserialize, Debug)]
+pub struct OrderRequest {
+    pub symbol: String,
+    pub side: String, // "buy" or "sell"
+    pub order_type: String, // "market" or "limit"
+    pub quantity: f64,
+    pub price: Option<f64>, // Required for limit orders
+    pub client_order_id: Option<String>,
+    pub currency: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct OrderResponse {
+    pub order_id: String,
+    pub status: String,
+    pub message: String,
+}
+
+/// POST /orders - Place a new order
+async fn place_order(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<OrderRequest>,
+) -> Result<Json<OrderResponse>, (StatusCode, Json<OrderResponse>)> {
+    // Authenticate user (must be logged in)
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Basic validation
+    if req.symbol.trim().is_empty() || req.quantity <= 0.0 {
+        return Err((StatusCode::BAD_REQUEST, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: "Invalid symbol or quantity".to_string(),
+        })));
+    }
+    if req.order_type == "limit" && req.price.is_none() {
+        return Err((StatusCode::BAD_REQUEST, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: "Limit orders require a price".to_string(),
+        })));
+    }
+    if req.order_type != "market" && req.order_type != "limit" {
+        return Err((StatusCode::BAD_REQUEST, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: "Invalid order type".to_string(),
+        })));
+    }
+    if req.side != "buy" && req.side != "sell" {
+        return Err((StatusCode::BAD_REQUEST, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: "Invalid order side".to_string(),
+        })));
+    }
+
+    // Generate order ID
+    let order_id = uuid::Uuid::new_v4().to_string();
+    
+    // Create a default wallet for signing (in production, load user's wallet)
+    let wallet = crate::core::wallet::Wallet::new();
+    let account = &wallet.accounts()[0]; // Use first account
+    
+    // Create transaction from order request
+    let mut transaction = create_transaction_from_order(&req, account, &order_id);
+    
+    // Sign the transaction
+    if let Err(e) = account.sign_transaction(&mut transaction) {
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: format!("Failed to sign transaction: {}", e),
+        })));
+    }
+    
+    // Add transaction to the pool
+    let added = state.tx_pool.add_transaction(transaction);
+    
+    if added {
+        // Broadcast order update via WebSocket
+        state.ws_manager.broadcast_orderbook_update(
+            &req.symbol,
+            vec![], // Mock bids
+            vec![], // Mock asks
+        );
+        
+        // Broadcast trade update if it's a market order
+        if req.order_type == "market" {
+            state.ws_manager.broadcast_trade_update(
+                &req.symbol,
+                req.price.unwrap_or(50000.0), // Use provided price or default
+                req.quantity,
+                &req.side,
+            );
+        }
+        
+        // Broadcast system message about order placement
+        let system_message = WebSocketMessage::SystemMessage {
+            message: format!("Order {} placed successfully", order_id),
+            level: "info".to_string(),
+            timestamp: chrono::Utc::now(),
+        };
+        let _ = state.ws_manager.orderbook_sender.send(system_message);
+        
+        Ok(Json(OrderResponse {
+            order_id,
+            status: "accepted".to_string(),
+            message: "Order placed successfully and added to transaction pool".to_string(),
+        }))
+    } else {
+        Err((StatusCode::BAD_REQUEST, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: "Order rejected by transaction pool".to_string(),
+        })))
+    }
+}
+
+/// Helper function to create a Transaction from an OrderRequest
+fn create_transaction_from_order(
+    req: &OrderRequest,
+    account: &crate::core::wallet::WalletAccount,
+    order_id: &str,
+) -> crate::core::types::Transaction {
+    use crate::core::types::{Transaction, ShardId};
+    use crate::core::address::Address;
+    use sha2::{Sha256, Digest};
+    use chrono::Utc;
+    
+    // Create order payload
+    let payload = serde_json::json!({
+        "order_id": order_id,
+        "symbol": req.symbol,
+        "side": req.side,
+        "order_type": req.order_type,
+        "quantity": req.quantity,
+        "price": req.price,
+        "client_order_id": req.client_order_id,
+        "currency": req.currency,
+        "timestamp": Utc::now().timestamp(),
+    });
+    
+    let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    
+    // Create HashTimer from order ID
+    let mut hashtimer = [0u8; 32];
+    let mut hasher = Sha256::new();
+    hasher.update(order_id.as_bytes());
+    hashtimer.copy_from_slice(&hasher.finalize());
+    
+    // Use account address as from/to (in production, resolve from user's wallet)
+    let from_address = account.address.clone();
+    let to_address = Address::new("findag_orderbook000000000000000000000000000000".to_string());
+    
+    Transaction {
+        from: from_address,
+        to: to_address,
+        amount: (req.quantity * 1_000_000.0) as u64, // Convert to base units
+        payload: payload_bytes,
+        findag_time: Utc::now().timestamp() as u64,
+        hashtimer,
+        signature: ed25519_dalek::Signature::from_bytes(&[0u8; 64]), // Dummy signature, replaced by sign_transaction
+        public_key: account.signing_key.verifying_key(),
+        shard_id: ShardId(0),
+        source_shard: None,
+        dest_shard: None,
+        target_chain: None,
+        bridge_protocol: None,
+    }
+}
+
 pub fn init_http_server(
     _validator_set: Arc<Mutex<ValidatorSet>>,
     _storage: Arc<crate::storage::persistent::PersistentStorage>,
@@ -1281,12 +1824,15 @@ pub fn create_app_state(
     tx_pool: Arc<ShardedTxPool>,
     network_propagator: Arc<NetworkPropagator>,
 ) -> Arc<AppState> {
+    let ws_manager = Arc::new(WebSocketManager::new());
+    crate::api::websocket::spawn_realtime_mock_data(ws_manager.clone());
     Arc::new(AppState {
         validator_set,
         storage,
         governance_state,
         tx_pool,
         network_propagator,
+        ws_manager,
     })
 }
 
@@ -1315,9 +1861,19 @@ pub async fn run_http_server() {
     println!("Warning: run_http_server() is deprecated. Use create_router() instead.");
 }
 
-pub fn create_router(state: Arc<AppState>) -> Router {
+pub fn create_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/auth/login", post(login))
+        .route("/auth/register", post(register))
+        .route("/auth/password-reset", post(password_reset))
+        .route("/auth/password-reset/:token", post(password_reset_confirm))
+        .route("/auth/change-password", post(change_password))
+        .route("/auth/logout", post(logout))
+        .route("/auth/2fa/setup", post(setup_2fa))
+        .route("/auth/2fa/enable", post(enable_2fa))
+        .route("/auth/2fa/disable", post(disable_2fa))
+        .route("/auth/2fa/verify", post(verify_2fa))
+        .route("/ws", get(websocket_handler))
         .route("/balance/:address/:asset", get(get_balance))
         .route("/tx", post(post_tx))
         .route("/validators", get(get_validators).post(add_validator))
@@ -1340,9 +1896,41 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/bridge/status/:tx_id", get(bridge_status))
         .route("/confidential/tx", post(submit_confidential_tx))
         .route("/identity/register", post(register_identity))
+        .route("/orders", post(place_order))
+        .route("/orders", get(get_order_history))
+        .route("/orders/:order_id", delete(cancel_order))
+        .route("/trades", get(get_trade_history))
+        .route("/positions", get(get_positions))
         .route("/block/:id", get(get_block))
         .route("/block/:id/merkle_proof/:tx_hash", get(get_merkle_proof))
         .route("/health", get(health))
+        // Wallet endpoints
+        .route("/wallet/connect", post(connect_wallet))
+        .route("/wallet/balance", get(get_wallet_balance))
+        .route("/wallet/transactions", get(get_transaction_history))
+        .route("/wallet/deposit", post(deposit_funds))
+        .route("/wallet/withdraw", post(withdraw_funds))
+        .route("/wallet/addresses", get(get_wallet_addresses).post(generate_wallet_address))
+        // DAG endpoints
+        .route("/dag/submit-transaction", post(submit_dag_transaction))
+        // .route("/dag/status", get(get_dag_status))
+        // .route("/dag/blocks", get(get_dag_blocks))
+        // .route("/dag/validators", get(get_dag_validators))
+        // Analytics endpoints
+        .route("/analytics/trading", get(get_trading_analytics))
+        .route("/analytics/performance", get(get_performance_metrics))
+        .route("/analytics/performance/timeseries", get(get_performance_timeseries))
+        .route("/analytics/risk", get(get_risk_analysis))
+        .route("/analytics/portfolio", get(get_portfolio_report))
+        .route("/analytics/market", get(get_market_analysis))
+        // Real-time data endpoints
+        .route("/realtime/subscribe", get(subscribe_realtime))
+        .route("/realtime/status", get(get_realtime_status))
+        // Security key management endpoints
+        .route("/security/keys/generate", post(generate_secure_key))
+        .route("/security/keys", get(list_secure_keys_endpoint))
+        .route("/security/keys/:key_id/rotate", post(rotate_secure_key_endpoint))
+        .route("/security/keys/:key_id", delete(deactivate_secure_key_endpoint))
         .layer(create_cors_layer())
         .layer(axum::middleware::from_fn(sanitize_request))
         .with_state(state)
@@ -1354,17 +1942,48 @@ pub async fn start(
 ) -> std::io::Result<()> {
     use tokio::net::TcpListener;
     
+    // Start cache cleanup task
+    start_cache_cleanup().await;
+    
+    // Create a minimal AppState for the simple server
+    let validator_set = Arc::new(Mutex::new(ValidatorSet::new()));
+    let storage = Arc::new(crate::storage::persistent::PersistentStorage::new("simple_server").unwrap());
+    let governance_state = Arc::new(Mutex::new(crate::consensus::governance::GovernanceState {
+        proposals: HashMap::new(),
+        votes: HashMap::new(),
+        active_proposals: Vec::new(),
+        executed_proposals: Vec::new(),
+        config: crate::consensus::governance::GovernanceConfig::default(),
+        total_stake: 0,
+        proposal_counter: 0,
+        analytics: crate::consensus::governance::GovernanceAnalytics::default(),
+        events: Vec::new(),
+        voter_activity: HashMap::new(),
+    }));
+    let network_propagator = Arc::new(NetworkPropagator::new("127.0.0.1:8080", vec![], Address::new("testaddress00000000000000000000000000000000".to_string())).await?);
+    
+    let app_state = Arc::new(AppState {
+        validator_set,
+        storage,
+        governance_state,
+        tx_pool,
+        network_propagator,
+        ws_manager: Arc::new(WebSocketManager::new()),
+    });
+    
     let app = Router::new()
         .route("/health", get(health))
-        .route("/tx", post(submit_transaction))
+        .route("/tx", post(post_tx))
+        .route("/ws", get(websocket_handler))
         .layer(create_cors_layer())
         .layer(middleware::from_fn(sanitize_request))
-        .with_state(tx_pool);
+        .with_state(app_state);
 
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr).await?;
     println!("HTTP server listening on {addr}");
     println!("Security features enabled: CORS, rate limiting, input validation, JWT authentication");
+    println!("Performance features enabled: Caching layer with TTL support");
     
     axum::serve(listener, app).await?;
     Ok(())
@@ -1397,3 +2016,2050 @@ async fn generate_test_data(State(_state): State<AppState>) -> impl IntoResponse
     
     // ... rest of the function remains the same ...
 } 
+
+/// POST /wallet/connect - Connect or create a wallet for the user
+async fn connect_wallet(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<WalletConnectResponse>, (StatusCode, Json<WalletConnectResponse>)> {
+    // Authenticate user (must be logged in)
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(WalletConnectResponse {
+            address: "".to_string(),
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // For now, just create a new wallet (in production, load from DB or session)
+    let wallet = crate::core::wallet::Wallet::new();
+    let address = wallet.address().to_string();
+    Ok(Json(WalletConnectResponse {
+        address,
+        message: "Wallet connected (demo)".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WalletConnectResponse {
+    pub address: String,
+    pub message: String,
+}
+
+/// GET /wallet/balance - Get wallet balances
+async fn get_wallet_balance(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<WalletBalanceResponse>, (StatusCode, Json<WalletBalanceResponse>)> {
+    // Authenticate user (must be logged in)
+    let user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(WalletBalanceResponse {
+            balances: vec![],
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Check cache first
+    let cache = get_cache();
+    if let Some(cached_balances) = cache.get_wallet_balance(&user).await {
+        return Ok(Json(WalletBalanceResponse {
+            balances: cached_balances,
+            message: "Wallet balances (cached)".to_string(),
+        }));
+    }
+
+    // Generate mock balances (in production, fetch from database)
+    let balances = vec![
+        WalletAssetBalance { asset: "USD".to_string(), amount: 10000.0 },
+        WalletAssetBalance { asset: "BTC".to_string(), amount: 2.5 },
+        WalletAssetBalance { asset: "ETH".to_string(), amount: 50.0 },
+    ];
+    
+    // Cache the balances
+    cache.set_wallet_balance(user, balances.clone()).await;
+    
+    Ok(Json(WalletBalanceResponse {
+        balances,
+        message: "Wallet balances (fresh)".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WalletBalanceResponse {
+    pub balances: Vec<WalletAssetBalance>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct WalletAssetBalance {
+    pub asset: String,
+    pub amount: f64,
+}
+
+/// GET /wallet/transactions - Get transaction history
+async fn get_transaction_history(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<TransactionHistoryResponse>, (StatusCode, Json<TransactionHistoryResponse>)> {
+    // Authenticate user (must be logged in)
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(TransactionHistoryResponse {
+            transactions: vec![],
+            total: 0,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Get pagination parameters
+    let page = params.get("page").and_then(|p| p.parse::<usize>().ok()).unwrap_or(1);
+    let limit = params.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(20);
+    let offset = (page - 1) * limit;
+
+    // For now, return mock transaction history
+    let mock_transactions = vec![
+        WalletTransaction {
+            tx_hash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string(),
+            from: "user_wallet_address".to_string(),
+            to: "orderbook_address".to_string(),
+            amount: 1000.0,
+            asset: "USD".to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+            status: "confirmed".to_string(),
+            fee: 0.001,
+        },
+        WalletTransaction {
+            tx_hash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
+            from: "faucet_address".to_string(),
+            to: "user_wallet_address".to_string(),
+            amount: 5000.0,
+            asset: "USD".to_string(),
+            timestamp: chrono::Utc::now().timestamp() - 3600,
+            status: "confirmed".to_string(),
+            fee: 0.0,
+        },
+        WalletTransaction {
+            tx_hash: "0x7890abcdef1234567890abcdef1234567890abcdef1234567890abcdef123456".to_string(),
+            from: "user_wallet_address".to_string(),
+            to: "exchange_address".to_string(),
+            amount: 0.5,
+            asset: "BTC".to_string(),
+            timestamp: chrono::Utc::now().timestamp() - 7200,
+            status: "pending".to_string(),
+            fee: 0.0001,
+        },
+    ];
+
+    // Apply pagination
+    let total = mock_transactions.len();
+    let transactions = mock_transactions
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect();
+
+    Ok(Json(TransactionHistoryResponse {
+        transactions,
+        total,
+        message: "Transaction history (mock)".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TransactionHistoryResponse {
+    pub transactions: Vec<WalletTransaction>,
+    pub total: usize,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WalletTransaction {
+    pub tx_hash: String,
+    pub from: String,
+    pub to: String,
+    pub amount: f64,
+    pub asset: String,
+    pub timestamp: i64,
+    pub status: String, // "pending", "confirmed", "failed"
+    pub fee: f64,
+}
+
+/// POST /wallet/deposit - Deposit funds to wallet
+async fn deposit_funds(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<DepositRequest>,
+) -> Result<Json<DepositResponse>, (StatusCode, Json<DepositResponse>)> {
+    // Authenticate user (must be logged in)
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(DepositResponse {
+            tx_hash: "".to_string(),
+            status: "failed".to_string(),
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Validate request
+    if req.amount <= 0.0 {
+        return Err((StatusCode::BAD_REQUEST, Json(DepositResponse {
+            tx_hash: "".to_string(),
+            status: "failed".to_string(),
+            message: "Invalid amount".to_string(),
+        })));
+    }
+
+    // For now, simulate deposit (in production, integrate with bridge or external system)
+    let tx_hash = format!("0x{}", hex::encode(rand::random::<[u8; 32]>()));
+    
+    Ok(Json(DepositResponse {
+        tx_hash,
+        status: "pending".to_string(),
+        message: "Deposit initiated (mock)".to_string(),
+    }))
+}
+
+/// POST /wallet/withdraw - Withdraw funds from wallet
+async fn withdraw_funds(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<WithdrawRequest>,
+) -> Result<Json<WithdrawResponse>, (StatusCode, Json<WithdrawResponse>)> {
+    // Authenticate user (must be logged in)
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(WithdrawResponse {
+            tx_hash: "".to_string(),
+            status: "failed".to_string(),
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Validate request
+    if req.amount <= 0.0 {
+        return Err((StatusCode::BAD_REQUEST, Json(WithdrawResponse {
+            tx_hash: "".to_string(),
+            status: "failed".to_string(),
+            message: "Invalid amount".to_string(),
+        })));
+    }
+
+    // For now, simulate withdrawal (in production, check balance and integrate with bridge)
+    let tx_hash = format!("0x{}", hex::encode(rand::random::<[u8; 32]>()));
+    
+    Ok(Json(WithdrawResponse {
+        tx_hash,
+        status: "pending".to_string(),
+        message: "Withdrawal initiated (mock)".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DepositRequest {
+    pub amount: f64,
+    pub asset: String,
+    pub external_address: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DepositResponse {
+    pub tx_hash: String,
+    pub status: String, // "pending", "confirmed", "failed"
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WithdrawRequest {
+    pub amount: f64,
+    pub asset: String,
+    pub external_address: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WithdrawResponse {
+    pub tx_hash: String,
+    pub status: String, // "pending", "confirmed", "failed"
+    pub message: String,
+}
+
+/// GET /wallet/addresses - Get wallet addresses
+async fn get_wallet_addresses(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<WalletAddressesResponse>, (StatusCode, Json<WalletAddressesResponse>)> {
+    // Authenticate user (must be logged in)
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(WalletAddressesResponse {
+            addresses: vec![],
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // For now, return mock addresses (in production, load from user's wallet)
+    let addresses = vec![
+        WalletAddress {
+            address: "findag_user_wallet_000000000000000000000000000000".to_string(),
+            label: "Primary".to_string(),
+            is_active: true,
+        },
+        WalletAddress {
+            address: "findag_user_wallet_111111111111111111111111111111".to_string(),
+            label: "Trading".to_string(),
+            is_active: true,
+        },
+    ];
+
+    Ok(Json(WalletAddressesResponse {
+        addresses,
+        message: "Wallet addresses (mock)".to_string(),
+    }))
+}
+
+/// POST /wallet/addresses - Generate new wallet address
+async fn generate_wallet_address(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<GenerateAddressRequest>,
+) -> Result<Json<GenerateAddressResponse>, (StatusCode, Json<GenerateAddressResponse>)> {
+    // Authenticate user (must be logged in)
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(GenerateAddressResponse {
+            address: "".to_string(),
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Generate new wallet address
+    let wallet = crate::core::wallet::Wallet::new();
+    let address = wallet.address().to_string();
+    
+    Ok(Json(GenerateAddressResponse {
+        address,
+        message: "New address generated (mock)".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WalletAddressesResponse {
+    pub addresses: Vec<WalletAddress>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WalletAddress {
+    pub address: String,
+    pub label: String,
+    pub is_active: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GenerateAddressRequest {
+    pub label: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GenerateAddressResponse {
+    pub address: String,
+    pub message: String,
+}
+
+/// POST /dag/submit-transaction - Submit a transaction to the DAG
+async fn submit_dag_transaction(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<DagTransactionRequest>,
+) -> Result<Json<DagTransactionResponse>, (StatusCode, Json<DagTransactionResponse>)> {
+    // Authenticate user (must be logged in)
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(DagTransactionResponse {
+            tx_hash: "".to_string(),
+            block_id: "".to_string(),
+            status: "failed".to_string(),
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Validate request
+    if req.amount <= 0.0 {
+        return Err((StatusCode::BAD_REQUEST, Json(DagTransactionResponse {
+            tx_hash: "".to_string(),
+            block_id: "".to_string(),
+            status: "failed".to_string(),
+            message: "Invalid amount".to_string(),
+        })));
+    }
+
+    // Create a wallet for signing (in production, load user's wallet)
+    let wallet = crate::core::wallet::Wallet::new();
+    let account = &wallet.accounts()[0];
+    
+    // Create transaction
+    let mut transaction = create_dag_transaction(&req, account);
+    
+    // Sign the transaction
+    if let Err(e) = account.sign_transaction(&mut transaction) {
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(DagTransactionResponse {
+            tx_hash: "".to_string(),
+            block_id: "".to_string(),
+            status: "failed".to_string(),
+            message: format!("Failed to sign transaction: {}", e),
+        })));
+    }
+    
+    // Add transaction to the pool
+    let added = state.tx_pool.add_transaction(transaction.clone());
+    
+    if added {
+        // Generate transaction hash
+        let tx_hash = format!("0x{}", hex::encode(transaction.hashtimer));
+        
+        // Create a mock block ID (in production, this would be created by block producer)
+        let block_id = format!("0x{}", hex::encode(rand::random::<[u8; 32]>()));
+        
+        Ok(Json(DagTransactionResponse {
+            tx_hash,
+            block_id,
+            status: "submitted".to_string(),
+            message: "Transaction submitted to DAG successfully".to_string(),
+        }))
+    } else {
+        Err((StatusCode::BAD_REQUEST, Json(DagTransactionResponse {
+            tx_hash: "".to_string(),
+            block_id: "".to_string(),
+            status: "failed".to_string(),
+            message: "Transaction rejected by DAG".to_string(),
+        })))
+    }
+}
+
+/// Helper function to create a DAG transaction
+fn create_dag_transaction(
+    req: &DagTransactionRequest,
+    account: &crate::core::wallet::WalletAccount,
+) -> crate::core::types::Transaction {
+    use crate::core::types::{Transaction, ShardId};
+    use crate::core::address::Address;
+    use sha2::{Sha256, Digest};
+    use chrono::Utc;
+    
+    // Create transaction payload
+    let payload = serde_json::json!({
+        "from": req.from,
+        "to": req.to,
+        "amount": req.amount,
+        "asset": req.asset,
+        "timestamp": Utc::now().timestamp(),
+        "purpose": req.purpose,
+    });
+    
+    let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    
+    // Create HashTimer from transaction data
+    let mut hashtimer = [0u8; 32];
+    let mut hasher = Sha256::new();
+    hasher.update(req.from.as_bytes());
+    hasher.update(req.to.as_bytes());
+    hasher.update(req.amount.to_string().as_bytes());
+    hashtimer.copy_from_slice(&hasher.finalize());
+    
+    // Use account address as from (in production, resolve from user's wallet)
+    let from_address = account.address.clone();
+    let to_address = Address::new(req.to.clone());
+    
+    Transaction {
+        from: from_address,
+        to: to_address,
+        amount: (req.amount * 1_000_000.0) as u64, // Convert to base units
+        payload: payload_bytes,
+        findag_time: Utc::now().timestamp() as u64,
+        hashtimer,
+        signature: ed25519_dalek::Signature::from_bytes(&[0u8; 64]), // Dummy signature, replaced by sign_transaction
+        public_key: account.signing_key.verifying_key(),
+        shard_id: ShardId(req.shard_id.unwrap_or(0)),
+        source_shard: None,
+        dest_shard: None,
+        target_chain: None,
+        bridge_protocol: None,
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DagTransactionRequest {
+    pub from: String,
+    pub to: String,
+    pub amount: f64,
+    pub asset: String,
+    pub purpose: Option<String>,
+    pub shard_id: Option<u16>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DagTransactionResponse {
+    pub tx_hash: String,
+    pub block_id: String,
+    pub status: String, // "submitted", "confirmed", "failed"
+    pub message: String,
+}
+
+/// GET /dag/status - Get DAG network status
+async fn get_dag_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<DagStatusResponse>, (StatusCode, Json<DagStatusResponse>)> {
+    // Check cache first
+    let cache = get_cache();
+    if let Some(cached_status) = cache.get_dag_status().await {
+        return Ok(Json(cached_status));
+    }
+    
+    // Get DAG statistics from the engine
+    let dag_engine = crate::core::dag_engine::DagEngine::new().await;
+    let stats = dag_engine.get_stats().await;
+    
+    // Get validator information
+    let validator_set = state.validator_set.lock().unwrap();
+    let validators = validator_set.get_all_validators();
+    
+    // Get transaction pool status (sum of all shards)
+    let tx_pool_size = 42; // Mock value - in production, sum all shard sizes
+    
+    let status = DagStatusResponse {
+        network_status: "active".to_string(),
+        total_blocks: stats.total_blocks,
+        tips_count: stats.tips_count,
+        max_depth: stats.max_depth,
+        avg_txs_per_block: stats.avg_txs_per_block,
+        active_validators: validators.len(),
+        tx_pool_size,
+        last_block_time: chrono::Utc::now().timestamp(),
+        consensus_status: "healthy".to_string(),
+        message: "DAG network status (fresh)".to_string(),
+    };
+    
+    // Cache the status
+    cache.set_dag_status(status.clone()).await;
+    
+    Ok(Json(status))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DagStatusResponse {
+    pub network_status: String, // "active", "syncing", "error"
+    pub total_blocks: usize,
+    pub tips_count: usize,
+    pub max_depth: usize,
+    pub avg_txs_per_block: f64,
+    pub active_validators: usize,
+    pub tx_pool_size: usize,
+    pub last_block_time: i64,
+    pub consensus_status: String, // "healthy", "degraded", "error"
+    pub message: String,
+}
+
+/// GET /dag/blocks - Get DAG blocks with pagination
+async fn get_dag_blocks(
+    State(_state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<DagBlocksResponse>, (StatusCode, Json<DagBlocksResponse>)> {
+    // Get pagination parameters
+    let page = params.get("page").and_then(|p| p.parse::<usize>().ok()).unwrap_or(1);
+    let limit = params.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(20);
+    let shard_id = params.get("shard_id").and_then(|s| s.parse::<u16>().ok());
+    
+    // Get DAG engine and blocks
+    let dag_engine = crate::core::dag_engine::DagEngine::new().await;
+    let all_blocks = dag_engine.get_all_blocks().await;
+    
+    // Filter by shard if specified
+    let filtered_blocks = if let Some(shard) = shard_id {
+        all_blocks.into_iter()
+            .filter(|block| block.shard_id.0 == shard)
+            .collect()
+    } else {
+        all_blocks
+    };
+    
+    // Apply pagination
+    let total = filtered_blocks.len();
+    let offset = (page - 1) * limit;
+    let blocks = filtered_blocks
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|block| DagBlock {
+            block_id: hex::encode(block.block_id),
+            parent_blocks: block.parent_blocks.into_iter().map(|p| hex::encode(p)).collect(),
+            transaction_count: block.transactions.len(),
+            findag_time: block.findag_time,
+            proposer: block.proposer.0,
+            shard_id: block.shard_id.0,
+            merkle_root: block.merkle_root.map(|r| hex::encode(r)),
+        })
+        .collect();
+    
+    Ok(Json(DagBlocksResponse {
+        blocks,
+        total,
+        page,
+        limit,
+        message: "DAG blocks retrieved successfully".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DagBlocksResponse {
+    pub blocks: Vec<DagBlock>,
+    pub total: usize,
+    pub page: usize,
+    pub limit: usize,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DagBlock {
+    pub block_id: String,
+    pub parent_blocks: Vec<String>,
+    pub transaction_count: usize,
+    pub findag_time: u64,
+    pub proposer: String,
+    pub shard_id: u16,
+    pub merkle_root: Option<String>,
+}
+
+/// GET /dag/validators - Get validator information
+async fn get_dag_validators(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<DagValidatorsResponse>, (StatusCode, Json<DagValidatorsResponse>)> {
+    // Check cache first
+    let cache = get_cache();
+    if let Some(cached_info) = cache.get_validator_info().await {
+        return Ok(Json(cached_info));
+    }
+    
+    // Get validator information from the validator set
+    let validator_set = state.validator_set.lock().unwrap();
+    let validators = validator_set.get_all_validators();
+    
+    // Convert to API response format
+    let validator_info = validators.iter().map(|validator| DagValidator {
+        address: validator.address.0.clone(),
+        public_key: hex::encode(validator.public_key.to_bytes()),
+        stake: validator.stake,
+        is_active: validator.is_active,
+        last_activity: validator.reputation.last_seen_timestamp,
+        performance_score: validator.reputation.reputation_score,
+    }).collect();
+    
+    // Get validator statistics
+    let total_validators = validators.len();
+    let active_validators = validators.iter().filter(|v| v.is_active).count();
+    let total_stake: u64 = validators.iter().map(|v| v.stake).sum();
+    
+    let info = DagValidatorsResponse {
+        validators: validator_info,
+        total_validators,
+        active_validators,
+        total_stake,
+        message: "Validator information retrieved successfully (fresh)".to_string(),
+    };
+    
+    // Cache the validator info
+    cache.set_validator_info(info.clone()).await;
+    
+    Ok(Json(info))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DagValidatorsResponse {
+    pub validators: Vec<DagValidator>,
+    pub total_validators: usize,
+    pub active_validators: usize,
+    pub total_stake: u64,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DagValidator {
+    pub address: String,
+    pub public_key: String,
+    pub stake: u64,
+    pub is_active: bool,
+    pub last_activity: u64,
+    pub performance_score: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OrderBookEntry {
+    pub price: f64,
+    pub quantity: f64,
+    pub timestamp: i64,
+}
+
+/// GET /analytics/trading - Trading analytics
+async fn get_trading_analytics(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<TradingAnalyticsResponse>, (StatusCode, Json<TradingAnalyticsResponse>)> {
+    // Authenticate user
+    let user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(TradingAnalyticsResponse {
+            total_volume: 0.0,
+            total_trades: 0,
+            win_rate: 0.0,
+            profit_loss: 0.0,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Check cache first
+    let cache = get_cache();
+    if let Some(cached_analytics) = cache.get_trading_analytics(&user).await {
+        return Ok(Json(cached_analytics));
+    }
+
+    // Mock trading analytics data
+    let analytics = TradingAnalyticsResponse {
+        total_volume: 1_000_000.0,
+        total_trades: 1200,
+        win_rate: 0.62,
+        profit_loss: 15000.0,
+        message: "Trading analytics (fresh)".to_string(),
+    };
+    
+    // Cache the analytics
+    cache.set_trading_analytics(user, analytics.clone()).await;
+    
+    Ok(Json(analytics))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TradingAnalyticsResponse {
+    pub total_volume: f64,
+    pub total_trades: usize,
+    pub win_rate: f64,
+    pub profit_loss: f64,
+    pub message: String,
+}
+
+/// GET /analytics/performance - System performance metrics
+async fn get_performance_metrics(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<PerformanceMetricsResponse>, (StatusCode, Json<PerformanceMetricsResponse>)> {
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(PerformanceMetricsResponse {
+            avg_latency_ms: 0.0,
+            max_throughput: 0.0,
+            uptime_hours: 0.0,
+            error_rate: 0.0,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+    Ok(Json(PerformanceMetricsResponse {
+        avg_latency_ms: 12.5,
+        max_throughput: 5000.0,
+        uptime_hours: 8760.0,
+        error_rate: 0.001,
+        message: "Performance metrics (mock)".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PerformanceMetricsResponse {
+    pub avg_latency_ms: f64,
+    pub max_throughput: f64,
+    pub uptime_hours: f64,
+    pub error_rate: f64,
+    pub message: String,
+}
+
+/// GET /analytics/risk - Risk analysis
+async fn get_risk_analysis(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<RiskAnalysisResponse>, (StatusCode, Json<RiskAnalysisResponse>)> {
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(RiskAnalysisResponse {
+            value_at_risk: 0.0,
+            max_drawdown: 0.0,
+            exposure: 0.0,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+    Ok(Json(RiskAnalysisResponse {
+        value_at_risk: 25000.0,
+        max_drawdown: 0.18,
+        exposure: 500000.0,
+        message: "Risk analysis (mock)".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RiskAnalysisResponse {
+    pub value_at_risk: f64,
+    pub max_drawdown: f64,
+    pub exposure: f64,
+    pub message: String,
+}
+
+/// GET /analytics/portfolio - Portfolio reports
+async fn get_portfolio_report(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<PortfolioReportResponse>, (StatusCode, Json<PortfolioReportResponse>)> {
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(PortfolioReportResponse {
+            holdings: vec![],
+            total_value: 0.0,
+            returns_pct: 0.0,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+    Ok(Json(PortfolioReportResponse {
+        holdings: vec![
+            PortfolioHolding { asset: "USD".to_string(), amount: 10000.0, value: 10000.0 },
+            PortfolioHolding { asset: "BTC".to_string(), amount: 2.5, value: 100000.0 },
+            PortfolioHolding { asset: "ETH".to_string(), amount: 50.0, value: 90000.0 },
+        ],
+        total_value: 200000.0,
+        returns_pct: 0.12,
+        message: "Portfolio report (mock)".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PortfolioReportResponse {
+    pub holdings: Vec<PortfolioHolding>,
+    pub total_value: f64,
+    pub returns_pct: f64,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PortfolioHolding {
+    pub asset: String,
+    pub amount: f64,
+    pub value: f64,
+}
+
+/// GET /analytics/market - Market analysis
+async fn get_market_analysis(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<MarketAnalysisResponse>, (StatusCode, Json<MarketAnalysisResponse>)> {
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(MarketAnalysisResponse {
+            price_trend: "upward".to_string(),
+            volatility: 0.22,
+            liquidity: 0.95,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+    Ok(Json(MarketAnalysisResponse {
+        price_trend: "upward".to_string(),
+        volatility: 0.22,
+        liquidity: 0.95,
+        message: "Market analysis (mock)".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MarketAnalysisResponse {
+    pub price_trend: String,
+    pub volatility: f64,
+    pub liquidity: f64,
+    pub message: String,
+}
+
+/// GET /realtime/subscribe - Subscribe to real-time data channels
+async fn subscribe_realtime(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<RealtimeSubscriptionResponse>, (StatusCode, Json<RealtimeSubscriptionResponse>)> {
+    // Authenticate user
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(RealtimeSubscriptionResponse {
+            success: false,
+            channels: vec![],
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Get channels from query parameters
+    let channels: Vec<String> = params.get("channels")
+        .map(|c| c.split(',').map(|s| s.trim().to_string()).collect())
+        .unwrap_or_default();
+
+    if channels.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(RealtimeSubscriptionResponse {
+            success: false,
+            channels: vec![],
+            message: "No channels specified".to_string(),
+        })));
+    }
+
+    Ok(Json(RealtimeSubscriptionResponse {
+        success: true,
+        channels,
+        message: "Successfully subscribed to real-time channels".to_string(),
+    }))
+}
+
+/// GET /realtime/status - Get real-time connection status
+async fn get_realtime_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<RealtimeStatusResponse>, (StatusCode, Json<RealtimeStatusResponse>)> {
+    let connections = state.ws_manager.connections.lock().unwrap();
+    let active_connections = connections.len();
+
+    Ok(Json(RealtimeStatusResponse {
+        active_connections,
+        uptime_seconds: chrono::Utc::now().timestamp(),
+        status: "active".to_string(),
+        message: "Real-time data service is running".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RealtimeSubscriptionResponse {
+    pub success: bool,
+    pub channels: Vec<String>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RealtimeStatusResponse {
+    pub active_connections: usize,
+    pub uptime_seconds: i64,
+    pub status: String,
+    pub message: String,
+}
+
+/// POST /auth/2fa/setup - Generate a new 2FA secret and QR code URL
+async fn setup_2fa(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Setup2FAResponse>, (StatusCode, Json<Setup2FAResponse>)> {
+    let user_id = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(Setup2FAResponse {
+            secret: "".to_string(),
+            qr_url: "".to_string(),
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+    // Generate a new random secret (20 bytes base32)
+    let mut secret_bytes = [0u8; 20];
+    rand::thread_rng().fill_bytes(&mut secret_bytes);
+    let secret = base32_encode(base32::Alphabet::RFC4648 { padding: false }, &secret_bytes);
+    let totp = TOTP::from_base32(&secret).unwrap();
+    let qr_url = format!(
+        "otpauth://totp/FinDAG:{}?secret={}&issuer=FinDAG",
+        user_id, secret
+    );
+    Ok(Json(Setup2FAResponse {
+        secret,
+        qr_url,
+        message: "Scan this QR code in your authenticator app".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Setup2FAResponse {
+    pub secret: String,
+    pub qr_url: String,
+    pub message: String,
+}
+
+/// POST /auth/2fa/enable - Enable 2FA after verifying code
+#[derive(Deserialize)]
+pub struct Enable2FARequest {
+    pub secret: String,
+    pub code: String,
+}
+
+async fn enable_2fa(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<Enable2FARequest>,
+) -> Result<Json<Enable2FAResponse>, (StatusCode, Json<Enable2FAResponse>)> {
+    let user_id = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(Enable2FAResponse {
+            success: false,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+    let totp = TOTP::from_base32(&req.secret).ok_or((StatusCode::BAD_REQUEST, Json(Enable2FAResponse {
+        success: false,
+        message: "Invalid secret format".to_string(),
+    })))?;
+    let code: u32 = req.code.parse().map_err(|_| (StatusCode::BAD_REQUEST, Json(Enable2FAResponse {
+        success: false,
+        message: "Invalid 2FA code format".to_string(),
+    })))?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    if !totp.verify(code, 30, now) {
+        return Err((StatusCode::BAD_REQUEST, Json(Enable2FAResponse {
+            success: false,
+            message: "Invalid 2FA code".to_string(),
+        })));
+    }
+    Ok(Json(Enable2FAResponse {
+        success: true,
+        message: "2FA enabled successfully".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Enable2FAResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// POST /auth/2fa/disable - Disable 2FA
+#[derive(Deserialize)]
+pub struct Disable2FARequest {
+    pub code: String,
+}
+
+async fn disable_2fa(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<Disable2FARequest>,
+) -> Result<Json<Disable2FAResponse>, (StatusCode, Json<Disable2FAResponse>)> {
+    let user_id = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(Disable2FAResponse {
+            success: false,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+    // In production, verify code and disable 2FA in DB
+    Ok(Json(Disable2FAResponse {
+        success: true,
+        message: "2FA disabled successfully".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Disable2FAResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// POST /auth/2fa/verify - Verify a 2FA code
+#[derive(Deserialize)]
+pub struct Verify2FARequest {
+    pub secret: String,
+    pub code: String,
+}
+
+async fn verify_2fa(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<Verify2FARequest>,
+) -> Result<Json<Verify2FAResponse>, (StatusCode, Json<Verify2FAResponse>)> {
+    let _user_id = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(Verify2FAResponse {
+            valid: false,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+    let totp = TOTP::from_base32(&req.secret).ok_or((StatusCode::BAD_REQUEST, Json(Verify2FAResponse {
+        valid: false,
+        message: "Invalid secret format".to_string(),
+    })))?;
+    let code: u32 = req.code.parse().map_err(|_| (StatusCode::BAD_REQUEST, Json(Verify2FAResponse {
+        valid: false,
+        message: "Invalid 2FA code format".to_string(),
+    })))?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let valid = totp.verify(code, 30, now);
+    Ok(Json(Verify2FAResponse {
+        valid,
+        message: if valid { "2FA code is valid".to_string() } else { "Invalid 2FA code".to_string() },
+    }))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Verify2FAResponse {
+    pub valid: bool,
+    pub message: String,
+}
+
+// Add helper function to clean up expired sessions
+fn cleanup_expired_sessions() {
+    let mut sessions = USER_SESSIONS.lock().unwrap();
+    let now = chrono::Utc::now();
+    let expiry = chrono::Duration::hours(JWT_EXPIRY_HOURS);
+    sessions.retain(|_, (_username, login_time)| now.signed_duration_since(*login_time) < expiry);
+}
+
+/// DELETE /orders/{order_id} - Cancel an existing order
+async fn cancel_order(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+) -> Result<Json<OrderResponse>, (StatusCode, Json<OrderResponse>)> {
+    // Authenticate user
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Basic validation
+    if order_id.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: "Invalid order ID".to_string(),
+        })));
+    }
+
+    // In a real implementation, you would:
+    // 1. Look up the order in the order book
+    // 2. Verify the user owns the order
+    // 3. Cancel the order in the order book
+    // 4. Create a cancellation transaction
+
+    // For now, we'll simulate order cancellation
+    let wallet = crate::core::wallet::Wallet::new();
+    let account = &wallet.accounts()[0];
+    
+    // Create cancellation transaction
+    let mut transaction = create_cancellation_transaction(&order_id, account);
+    
+    // Sign the transaction
+    if let Err(e) = account.sign_transaction(&mut transaction) {
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: format!("Failed to sign cancellation transaction: {}", e),
+        })));
+    }
+    
+    // Add transaction to the pool
+    let added = state.tx_pool.add_transaction(transaction);
+    
+    if added {
+        // Broadcast order cancellation via WebSocket
+        let system_message = WebSocketMessage::SystemMessage {
+            message: format!("Order {} cancelled successfully", order_id),
+            level: "info".to_string(),
+            timestamp: chrono::Utc::now(),
+        };
+        let _ = state.ws_manager.orderbook_sender.send(system_message);
+        
+        Ok(Json(OrderResponse {
+            order_id: order_id.clone(),
+            status: "cancelled".to_string(),
+            message: "Order cancelled successfully".to_string(),
+        }))
+    } else {
+        Err((StatusCode::BAD_REQUEST, Json(OrderResponse {
+            order_id: "".to_string(),
+            status: "rejected".to_string(),
+            message: "Order cancellation rejected by transaction pool".to_string(),
+        })))
+    }
+}
+
+/// GET /orders - Get order history for the authenticated user
+async fn get_order_history(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<OrderHistoryResponse>, (StatusCode, Json<OrderHistoryResponse>)> {
+    // Authenticate user
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(OrderHistoryResponse {
+            orders: vec![],
+            total: 0,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Parse query parameters
+    let page = params.get("page").and_then(|p| p.parse::<usize>().ok()).unwrap_or(1);
+    let limit = params.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(20);
+    let status = params.get("status").cloned();
+    let symbol = params.get("symbol").cloned();
+
+    // Mock order history data
+    let mut orders = vec![
+        OrderHistoryEntry {
+            order_id: "ord_123456789".to_string(),
+            symbol: "BTC/USD".to_string(),
+            side: "buy".to_string(),
+            order_type: "limit".to_string(),
+            quantity: 0.5,
+            price: Some(50000.0),
+            status: "filled".to_string(),
+            filled_quantity: 0.5,
+            average_price: 50000.0,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+        },
+        OrderHistoryEntry {
+            order_id: "ord_987654321".to_string(),
+            symbol: "ETH/USD".to_string(),
+            side: "sell".to_string(),
+            order_type: "market".to_string(),
+            quantity: 2.0,
+            price: None,
+            status: "pending".to_string(),
+            filled_quantity: 0.0,
+            average_price: 0.0,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+        },
+    ];
+
+    // Apply filters
+    if let Some(status_filter) = &status {
+        orders.retain(|order| order.status == *status_filter);
+    }
+    if let Some(symbol_filter) = &symbol {
+        orders.retain(|order| order.symbol == *symbol_filter);
+    }
+
+    let total = orders.len();
+    Ok(Json(OrderHistoryResponse {
+        orders,
+        total,
+        message: "Order history retrieved successfully".to_string(),
+    }))
+}
+
+/// GET /trades - Get trade history for the authenticated user
+async fn get_trade_history(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<TradeHistoryResponse>, (StatusCode, Json<TradeHistoryResponse>)> {
+    // Authenticate user
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(TradeHistoryResponse {
+            trades: vec![],
+            total: 0,
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Parse query parameters
+    let page = params.get("page").and_then(|p| p.parse::<usize>().ok()).unwrap_or(1);
+    let limit = params.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(20);
+    let symbol = params.get("symbol").cloned();
+
+    // Mock trade history data
+    let mut trades = vec![
+        TradeHistoryEntry {
+            trade_id: "trade_123456789".to_string(),
+            order_id: "ord_123456789".to_string(),
+            symbol: "BTC/USD".to_string(),
+            side: "buy".to_string(),
+            quantity: 0.5,
+            price: 50000.0,
+            fee: 25.0,
+            timestamp: chrono::Utc::now().timestamp(),
+        },
+        TradeHistoryEntry {
+            trade_id: "trade_987654321".to_string(),
+            order_id: "ord_987654321".to_string(),
+            symbol: "ETH/USD".to_string(),
+            side: "sell".to_string(),
+            quantity: 1.5,
+            price: 3000.0,
+            fee: 15.0,
+            timestamp: chrono::Utc::now().timestamp(),
+        },
+    ];
+
+    // Apply filters
+    if let Some(symbol_filter) = &symbol {
+        trades.retain(|trade| trade.symbol == *symbol_filter);
+    }
+
+    let total = trades.len();
+    Ok(Json(TradeHistoryResponse {
+        trades,
+        total,
+        message: "Trade history retrieved successfully".to_string(),
+    }))
+}
+
+/// GET /positions - Get current positions for the authenticated user
+async fn get_positions(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<PositionsResponse>, (StatusCode, Json<PositionsResponse>)> {
+    // Authenticate user
+    let _user = authenticate_user(headers, "user").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(PositionsResponse {
+            positions: vec![],
+            message: "Authentication required".to_string(),
+        }))
+    })?;
+
+    // Mock positions data
+    let positions = vec![
+        PositionEntry {
+            symbol: "BTC/USD".to_string(),
+            side: "long".to_string(),
+            quantity: 1.5,
+            average_price: 48000.0,
+            current_price: 50000.0,
+            unrealized_pnl: 3000.0,
+            realized_pnl: 1500.0,
+            margin_used: 24000.0,
+            leverage: 2.0,
+        },
+        PositionEntry {
+            symbol: "ETH/USD".to_string(),
+            side: "short".to_string(),
+            quantity: 5.0,
+            average_price: 3200.0,
+            current_price: 3000.0,
+            unrealized_pnl: 1000.0,
+            realized_pnl: -200.0,
+            margin_used: 16000.0,
+            leverage: 1.5,
+        },
+    ];
+
+    Ok(Json(PositionsResponse {
+        positions,
+        message: "Positions retrieved successfully".to_string(),
+    }))
+}
+
+/// Helper function to create a cancellation transaction
+fn create_cancellation_transaction(
+    order_id: &str,
+    account: &crate::core::wallet::WalletAccount,
+) -> crate::core::types::Transaction {
+    use crate::core::types::{Transaction, ShardId};
+    use crate::core::address::Address;
+    use sha2::{Sha256, Digest};
+    use chrono::Utc;
+    
+    // Create cancellation payload
+    let payload = serde_json::json!({
+        "action": "cancel_order",
+        "order_id": order_id,
+        "timestamp": Utc::now().timestamp(),
+    });
+    
+    let payload_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    
+    // Create HashTimer from order ID
+    let mut hashtimer = [0u8; 32];
+    let mut hasher = Sha256::new();
+    hasher.update(order_id.as_bytes());
+    hashtimer.copy_from_slice(&hasher.finalize());
+    
+    // Use account address as from/to
+    let from_address = account.address.clone();
+    let to_address = Address::new("findag_orderbook000000000000000000000000000000".to_string());
+    
+    Transaction {
+        from: from_address,
+        to: to_address,
+        amount: 0, // Cancellation doesn't transfer funds
+        payload: payload_bytes,
+        findag_time: Utc::now().timestamp() as u64,
+        hashtimer,
+        signature: ed25519_dalek::Signature::from_bytes(&[0u8; 64]), // Dummy signature
+        public_key: account.signing_key.verifying_key(),
+        shard_id: ShardId(0),
+        source_shard: None,
+        dest_shard: None,
+        target_chain: None,
+        bridge_protocol: None,
+    }
+}
+
+#[derive(Serialize)]
+pub struct OrderHistoryResponse {
+    pub orders: Vec<OrderHistoryEntry>,
+    pub total: usize,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct OrderHistoryEntry {
+    pub order_id: String,
+    pub symbol: String,
+    pub side: String, // "buy" or "sell"
+    pub order_type: String, // "market" or "limit"
+    pub quantity: f64,
+    pub price: Option<f64>,
+    pub status: String, // "pending", "filled", "cancelled", "rejected"
+    pub filled_quantity: f64,
+    pub average_price: f64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Serialize)]
+pub struct TradeHistoryResponse {
+    pub trades: Vec<TradeHistoryEntry>,
+    pub total: usize,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct TradeHistoryEntry {
+    pub trade_id: String,
+    pub order_id: String,
+    pub symbol: String,
+    pub side: String, // "buy" or "sell"
+    pub quantity: f64,
+    pub price: f64,
+    pub fee: f64,
+    pub timestamp: i64,
+}
+
+#[derive(Serialize)]
+pub struct PositionsResponse {
+    pub positions: Vec<PositionEntry>,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct PositionEntry {
+    pub symbol: String,
+    pub side: String, // "long" or "short"
+    pub quantity: f64,
+    pub average_price: f64,
+    pub current_price: f64,
+    pub unrealized_pnl: f64,
+    pub realized_pnl: f64,
+    pub margin_used: f64,
+    pub leverage: f64,
+}
+
+// Secure key management
+static SECURE_KEYS: OnceLock<Arc<Mutex<HashMap<String, SecureKey>>>> = OnceLock::new();
+
+#[derive(Clone, Debug)]
+pub struct SecureKey {
+    pub key_id: String,
+    pub key_type: KeyType,
+    pub encrypted_key: Vec<u8>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub is_active: bool,
+    pub usage_count: u32,
+}
+
+#[derive(Clone, Debug)]
+pub enum KeyType {
+    ApiKey,
+    WalletKey,
+    JwtSecret,
+    EncryptionKey,
+    SigningKey,
+}
+
+impl SecureKey {
+    pub fn new(key_type: KeyType, key_data: Vec<u8>) -> Self {
+        let key_id = uuid::Uuid::new_v4().to_string();
+        let encrypted_key = encrypt_key_data(&key_data);
+        
+        Self {
+            key_id,
+            key_type,
+            encrypted_key,
+            created_at: Utc::now(),
+            expires_at: None,
+            is_active: true,
+            usage_count: 0,
+        }
+    }
+    
+    pub fn is_expired(&self) -> bool {
+        if let Some(expires_at) = self.expires_at {
+            Utc::now() > expires_at
+        } else {
+            false
+        }
+    }
+    
+    pub fn increment_usage(&mut self) {
+        self.usage_count += 1;
+    }
+}
+
+/// Generate a new secure API key
+pub fn generate_api_key() -> String {
+    let mut rng = OsRng;
+    let key_bytes: [u8; 32] = rng.gen();
+    format!("fdg_{}", base32_encode(base32::Alphabet::RFC4648 { padding: false }, &key_bytes))
+}
+
+/// Generate a new secure wallet key
+pub fn generate_wallet_key() -> Vec<u8> {
+    let mut rng = OsRng;
+    let mut key_bytes = [0u8; 32];
+    rng.fill_bytes(&mut key_bytes);
+    key_bytes.to_vec()
+}
+
+/// Store a secure key
+pub fn store_secure_key(key_type: KeyType, key_data: Vec<u8>) -> String {
+    let keys = SECURE_KEYS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+    let mut keys_guard = keys.lock().unwrap();
+    
+    let secure_key = SecureKey::new(key_type, key_data);
+    let key_id = secure_key.key_id.clone();
+    keys_guard.insert(key_id.clone(), secure_key);
+    
+    key_id
+}
+
+/// Retrieve a secure key
+pub fn get_secure_key(key_id: &str) -> Option<Vec<u8>> {
+    let keys = SECURE_KEYS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+    let mut keys_guard = keys.lock().unwrap();
+    
+    if let Some(secure_key) = keys_guard.get_mut(key_id) {
+        if secure_key.is_active && !secure_key.is_expired() {
+            secure_key.increment_usage();
+            Some(decrypt_key_data(&secure_key.encrypted_key))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Rotate a secure key
+pub fn rotate_secure_key(key_id: &str) -> Option<String> {
+    let keys = SECURE_KEYS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+    let mut keys_guard = keys.lock().unwrap();
+    
+    if let Some(secure_key) = keys_guard.get(key_id) {
+        let new_key_data = match secure_key.key_type {
+            KeyType::ApiKey => generate_api_key().as_bytes().to_vec(),
+            KeyType::WalletKey => generate_wallet_key(),
+            KeyType::JwtSecret => {
+                let mut rng = OsRng;
+                let mut secret = [0u8; 32];
+                rng.fill_bytes(&mut secret);
+                secret.to_vec()
+            },
+            KeyType::EncryptionKey => {
+                let mut rng = OsRng;
+                let mut key = [0u8; 32];
+                rng.fill_bytes(&mut key);
+                key.to_vec()
+            },
+            KeyType::SigningKey => {
+                let mut rng = OsRng;
+                let mut key = [0u8; 64];
+                rng.fill_bytes(&mut key);
+                key.to_vec()
+            },
+        };
+        
+        let new_secure_key = SecureKey::new(secure_key.key_type.clone(), new_key_data);
+        let new_key_id = new_secure_key.key_id.clone();
+        
+        // Deactivate old key
+        if let Some(old_key) = keys_guard.get_mut(key_id) {
+            old_key.is_active = false;
+        }
+        
+        // Store new key
+        keys_guard.insert(new_key_id.clone(), new_secure_key);
+        
+        Some(new_key_id)
+    } else {
+        None
+    }
+}
+
+/// List all secure keys
+pub fn list_secure_keys() -> Vec<SecureKeyInfo> {
+    let keys = SECURE_KEYS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+    let keys_guard = keys.lock().unwrap();
+    
+    keys_guard.iter().map(|(key_id, secure_key)| {
+        SecureKeyInfo {
+            key_id: key_id.clone(),
+            key_type: format!("{:?}", secure_key.key_type),
+            created_at: secure_key.created_at,
+            expires_at: secure_key.expires_at,
+            is_active: secure_key.is_active,
+            usage_count: secure_key.usage_count,
+        }
+    }).collect()
+}
+
+#[derive(Serialize)]
+pub struct SecureKeyInfo {
+    pub key_id: String,
+    pub key_type: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub is_active: bool,
+    pub usage_count: u32,
+}
+
+/// Encrypt key data (in production, use a proper encryption library)
+fn encrypt_key_data(key_data: &[u8]) -> Vec<u8> {
+    // Simple XOR encryption for demo (use proper encryption in production)
+    let key = b"FinDAG_Secure_Key_2024";
+    key_data.iter().enumerate().map(|(i, &byte)| {
+        byte ^ key[i % key.len()]
+    }).collect()
+}
+
+/// Decrypt key data (in production, use a proper encryption library)
+fn decrypt_key_data(encrypted_data: &[u8]) -> Vec<u8> {
+    // Simple XOR decryption for demo (use proper decryption in production)
+    let key = b"FinDAG_Secure_Key_2024";
+    encrypted_data.iter().enumerate().map(|(i, &byte)| {
+        byte ^ key[i % key.len()]
+    }).collect()
+}
+
+/// POST /security/keys/generate - Generate a new secure key
+async fn generate_secure_key(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<GenerateKeyRequest>,
+) -> Result<Json<GenerateKeyResponse>, (StatusCode, Json<GenerateKeyResponse>)> {
+    // Authenticate as admin
+    let _user = authenticate_user(headers, "admin").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(GenerateKeyResponse {
+            key_id: "".to_string(),
+            key_type: "".to_string(),
+            message: "Admin authentication required".to_string(),
+        }))
+    })?;
+
+    let key_data = match req.key_type.as_str() {
+        "api_key" => generate_api_key().as_bytes().to_vec(),
+        "wallet_key" => generate_wallet_key(),
+        "jwt_secret" => {
+            let mut rng = OsRng;
+            let mut secret = [0u8; 32];
+            rng.fill_bytes(&mut secret);
+            secret.to_vec()
+        },
+        "encryption_key" => {
+            let mut rng = OsRng;
+            let mut key = [0u8; 32];
+            rng.fill_bytes(&mut key);
+            key.to_vec()
+        },
+        "signing_key" => {
+            let mut rng = OsRng;
+            let mut key = [0u8; 64];
+            rng.fill_bytes(&mut key);
+            key.to_vec()
+        },
+        _ => {
+            return Err((StatusCode::BAD_REQUEST, Json(GenerateKeyResponse {
+                key_id: "".to_string(),
+                key_type: "".to_string(),
+                message: "Invalid key type".to_string(),
+            })));
+        }
+    };
+
+    let key_type_enum = match req.key_type.as_str() {
+        "api_key" => KeyType::ApiKey,
+        "wallet_key" => KeyType::WalletKey,
+        "jwt_secret" => KeyType::JwtSecret,
+        "encryption_key" => KeyType::EncryptionKey,
+        "signing_key" => KeyType::SigningKey,
+        _ => KeyType::ApiKey, // Default
+    };
+
+    let key_id = store_secure_key(key_type_enum, key_data);
+
+    Ok(Json(GenerateKeyResponse {
+        key_id,
+        key_type: req.key_type,
+        message: "Secure key generated successfully".to_string(),
+    }))
+}
+
+/// GET /security/keys - List all secure keys
+async fn list_secure_keys_endpoint(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<ListKeysResponse>, (StatusCode, Json<ListKeysResponse>)> {
+    // Authenticate as admin
+    let _user = authenticate_user(headers, "admin").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(ListKeysResponse {
+            keys: vec![],
+            message: "Admin authentication required".to_string(),
+        }))
+    })?;
+
+    let keys = list_secure_keys();
+
+    Ok(Json(ListKeysResponse {
+        keys,
+        message: "Secure keys retrieved successfully".to_string(),
+    }))
+}
+
+/// POST /security/keys/{key_id}/rotate - Rotate a secure key
+async fn rotate_secure_key_endpoint(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(key_id): Path<String>,
+) -> Result<Json<RotateKeyResponse>, (StatusCode, Json<RotateKeyResponse>)> {
+    // Authenticate as admin
+    let _user = authenticate_user(headers, "admin").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(RotateKeyResponse {
+            new_key_id: "".to_string(),
+            message: "Admin authentication required".to_string(),
+        }))
+    })?;
+
+    if let Some(new_key_id) = rotate_secure_key(&key_id) {
+        Ok(Json(RotateKeyResponse {
+            new_key_id,
+            message: "Secure key rotated successfully".to_string(),
+        }))
+    } else {
+        Err((StatusCode::NOT_FOUND, Json(RotateKeyResponse {
+            new_key_id: "".to_string(),
+            message: "Key not found".to_string(),
+        })))
+    }
+}
+
+/// DELETE /security/keys/{key_id} - Deactivate a secure key
+async fn deactivate_secure_key_endpoint(
+    State(_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(key_id): Path<String>,
+) -> Result<Json<DeactivateKeyResponse>, (StatusCode, Json<DeactivateKeyResponse>)> {
+    // Authenticate as admin
+    let _user = authenticate_user(headers, "admin").await.map_err(|_| {
+        (StatusCode::UNAUTHORIZED, Json(DeactivateKeyResponse {
+            success: false,
+            message: "Admin authentication required".to_string(),
+        }))
+    })?;
+
+    let keys = SECURE_KEYS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+    let mut keys_guard = keys.lock().unwrap();
+    
+    if let Some(secure_key) = keys_guard.get_mut(&key_id) {
+        secure_key.is_active = false;
+        Ok(Json(DeactivateKeyResponse {
+            success: true,
+            message: "Secure key deactivated successfully".to_string(),
+        }))
+    } else {
+        Err((StatusCode::NOT_FOUND, Json(DeactivateKeyResponse {
+            success: false,
+            message: "Key not found".to_string(),
+        })))
+    }
+}
+
+#[derive(Deserialize)]
+pub struct GenerateKeyRequest {
+    pub key_type: String, // "api_key", "wallet_key", "jwt_secret", "encryption_key", "signing_key"
+}
+
+#[derive(Serialize)]
+pub struct GenerateKeyResponse {
+    pub key_id: String,
+    pub key_type: String,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct ListKeysResponse {
+    pub keys: Vec<SecureKeyInfo>,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct RotateKeyResponse {
+    pub new_key_id: String,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct DeactivateKeyResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+// Cache management
+#[derive(Clone, Debug)]
+pub struct CacheEntry<T> {
+    pub data: T,
+    pub created_at: Instant,
+    pub ttl: Duration,
+}
+
+impl<T> CacheEntry<T> {
+    pub fn new(data: T, ttl: Duration) -> Self {
+        Self {
+            data,
+            created_at: Instant::now(),
+            ttl,
+        }
+    }
+    
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed() > self.ttl
+    }
+}
+
+pub struct Cache {
+    user_sessions: Arc<RwLock<HashMap<String, CacheEntry<String>>>>,
+    wallet_balances: Arc<RwLock<HashMap<String, CacheEntry<Vec<WalletAssetBalance>>>>>,
+    order_book: Arc<RwLock<HashMap<String, CacheEntry<(Vec<OrderBookEntry>, Vec<OrderBookEntry>)>>>>,
+    dag_status: Arc<RwLock<CacheEntry<DagStatusResponse>>>,
+    validator_info: Arc<RwLock<CacheEntry<DagValidatorsResponse>>>,
+    trading_analytics: Arc<RwLock<HashMap<String, CacheEntry<TradingAnalyticsResponse>>>>,
+}
+
+impl Cache {
+    pub fn new() -> Self {
+        Self {
+            user_sessions: Arc::new(RwLock::new(HashMap::new())),
+            wallet_balances: Arc::new(RwLock::new(HashMap::new())),
+            order_book: Arc::new(RwLock::new(HashMap::new())),
+            dag_status: Arc::new(RwLock::new(CacheEntry::new(
+                DagStatusResponse {
+                    network_status: "active".to_string(),
+                    total_blocks: 0,
+                    tips_count: 0,
+                    max_depth: 0,
+                    avg_txs_per_block: 0.0,
+                    active_validators: 0,
+                    tx_pool_size: 0,
+                    last_block_time: 0,
+                    consensus_status: "healthy".to_string(),
+                    message: "Cached status".to_string(),
+                },
+                Duration::from_secs(30), // 30 second TTL
+            ))),
+            validator_info: Arc::new(RwLock::new(CacheEntry::new(
+                DagValidatorsResponse {
+                    validators: vec![],
+                    total_validators: 0,
+                    active_validators: 0,
+                    total_stake: 0,
+                    message: "Cached validators".to_string(),
+                },
+                Duration::from_secs(60), // 1 minute TTL
+            ))),
+            trading_analytics: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    
+    // User session cache
+    pub async fn get_user_session(&self, user_id: &str) -> Option<String> {
+        let sessions = self.user_sessions.read().await;
+        if let Some(entry) = sessions.get(user_id) {
+            if !entry.is_expired() {
+                Some(entry.data.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+    
+    pub async fn set_user_session(&self, user_id: String, session_data: String) {
+        let mut sessions = self.user_sessions.write().await;
+        sessions.insert(user_id, CacheEntry::new(session_data, Duration::from_secs(3600))); // 1 hour TTL
+    }
+    
+    pub async fn remove_user_session(&self, user_id: &str) {
+        let mut sessions = self.user_sessions.write().await;
+        sessions.remove(user_id);
+    }
+    
+    // Wallet balance cache
+    pub async fn get_wallet_balance(&self, address: &str) -> Option<Vec<WalletAssetBalance>> {
+        let balances = self.wallet_balances.read().await;
+        if let Some(entry) = balances.get(address) {
+            if !entry.is_expired() {
+                Some(entry.data.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+    
+    pub async fn set_wallet_balance(&self, address: String, balances: Vec<WalletAssetBalance>) {
+        let mut cache = self.wallet_balances.write().await;
+        cache.insert(address, CacheEntry::new(balances, Duration::from_secs(300))); // 5 minute TTL
+    }
+    
+    // Order book cache
+    pub async fn get_order_book(&self, symbol: &str) -> Option<(Vec<OrderBookEntry>, Vec<OrderBookEntry>)> {
+        let order_book = self.order_book.read().await;
+        if let Some(entry) = order_book.get(symbol) {
+            if !entry.is_expired() {
+                Some(entry.data.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+    
+    pub async fn set_order_book(&self, symbol: String, bids: Vec<OrderBookEntry>, asks: Vec<OrderBookEntry>) {
+        let mut cache = self.order_book.write().await;
+        cache.insert(symbol, CacheEntry::new((bids, asks), Duration::from_secs(10))); // 10 second TTL
+    }
+    
+    // DAG status cache
+    pub async fn get_dag_status(&self) -> Option<DagStatusResponse> {
+        let status = self.dag_status.read().await;
+        if !status.is_expired() {
+            Some(status.data.clone())
+        } else {
+            None
+        }
+    }
+    
+    pub async fn set_dag_status(&self, status: DagStatusResponse) {
+        let mut cache = self.dag_status.write().await;
+        *cache = CacheEntry::new(status, Duration::from_secs(30)); // 30 second TTL
+    }
+    
+    // Validator info cache
+    pub async fn get_validator_info(&self) -> Option<DagValidatorsResponse> {
+        let info = self.validator_info.read().await;
+        if !info.is_expired() {
+            Some(info.data.clone())
+        } else {
+            None
+        }
+    }
+    
+    pub async fn set_validator_info(&self, info: DagValidatorsResponse) {
+        let mut cache = self.validator_info.write().await;
+        *cache = CacheEntry::new(info, Duration::from_secs(60)); // 1 minute TTL
+    }
+    
+    // Trading analytics cache
+    pub async fn get_trading_analytics(&self, user_id: &str) -> Option<TradingAnalyticsResponse> {
+        let analytics = self.trading_analytics.read().await;
+        if let Some(entry) = analytics.get(user_id) {
+            if !entry.is_expired() {
+                Some(entry.data.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+    
+    pub async fn set_trading_analytics(&self, user_id: String, analytics: TradingAnalyticsResponse) {
+        let mut cache = self.trading_analytics.write().await;
+        cache.insert(user_id, CacheEntry::new(analytics, Duration::from_secs(300))); // 5 minute TTL
+    }
+    
+    // Cache cleanup
+    pub async fn cleanup_expired(&self) {
+        // Clean up user sessions
+        let mut sessions = self.user_sessions.write().await;
+        sessions.retain(|_, entry| !entry.is_expired());
+        
+        // Clean up wallet balances
+        let mut balances = self.wallet_balances.write().await;
+        balances.retain(|_, entry| !entry.is_expired());
+        
+        // Clean up order book
+        let mut order_book = self.order_book.write().await;
+        order_book.retain(|_, entry| !entry.is_expired());
+        
+        // Clean up trading analytics
+        let mut analytics = self.trading_analytics.write().await;
+        analytics.retain(|_, entry| !entry.is_expired());
+    }
+}
+
+// Global cache instance
+static CACHE: OnceLock<Arc<Cache>> = OnceLock::new();
+
+pub fn get_cache() -> Arc<Cache> {
+    CACHE.get_or_init(|| Arc::new(Cache::new())).clone()
+}
+
+// Cache cleanup task
+pub async fn start_cache_cleanup() {
+    let cache = get_cache();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300)); // Clean up every 5 minutes
+        loop {
+            interval.tick().await;
+            cache.cleanup_expired().await;
+        }
+    });
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TimeseriesPoint {
+    pub timestamp: i64,
+    pub value: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PerformanceTimeseriesResponse {
+    pub metric: String,
+    pub range: String,
+    pub points: Vec<TimeseriesPoint>,
+    pub message: String,
+}
+
+#[derive(Deserialize)]
+struct TimeseriesQuery {
+    metric: String, // "tps", "latency", "nodes", "blocks"
+    range: String,  // "1h", "6h", "24h", "7d"
+}
+
+async fn get_performance_timeseries(Query(params): Query<TimeseriesQuery>) -> Json<PerformanceTimeseriesResponse> {
+    let now = chrono::Utc::now().timestamp();
+    let (points, interval, count) = match params.range.as_str() {
+        "1h" => (60, 60, 60),      // 1-min intervals, 60 points
+        "6h" => (300, 72, 72),     // 5-min intervals, 72 points
+        "24h" => (900, 96, 96),    // 15-min intervals, 96 points
+        "7d" => (3600, 168, 168),  // 1-hour intervals, 168 points
+        _ => (900, 96, 96),         // Default: 24h
+    };
+    let mut data = Vec::with_capacity(count);
+    for i in 0..count {
+        let timestamp = now - ((count - i) as i64 * interval as i64);
+        let value = match params.metric.as_str() {
+            "tps" => 1000000.0 + rand::random::<f64>() * 500000.0,
+            "latency" => 30.0 + rand::random::<f64>() * 40.0,
+            "nodes" => 10.0 + (rand::random::<f64>() * 5.0).floor(),
+            "blocks" => 100.0 + rand::random::<f64>() * 200.0,
+            _ => rand::random::<f64>() * 1000.0,
+        };
+        data.push(TimeseriesPoint { timestamp, value });
+    }
+    Json(PerformanceTimeseriesResponse {
+        metric: params.metric,
+        range: params.range,
+        points: data,
+        message: "Mock time-series data".to_string(),
+    })
+}
+
+// ... in the router setup (create_router or similar) ...
+// .route("/analytics/performance/timeseries", get(get_performance_timeseries))

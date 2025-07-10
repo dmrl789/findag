@@ -1,296 +1,312 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Semaphore;
+use std::collections::HashMap;
+use tokio::time::sleep;
 use serde::{Serialize, Deserialize};
-use crate::storage::PersistentStorage;
-use crate::core::types::{Block, Transaction};
-use crate::core::address::Address;
-use ed25519_dalek::{Signature, VerifyingKey};
+use axum::http::{StatusCode, HeaderMap};
+use axum::body::Body;
+use axum::http::Request;
+use tower::ServiceExt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LoadTestConfig {
-    pub concurrent_users: u32,
-    pub requests_per_user: u32,
-    pub ramp_up_duration: Duration,
-    pub test_duration: Duration,
-    pub target_tps: u32,
-    pub load_pattern: LoadPattern,
+    pub endpoint: String,
+    pub method: String,
+    pub headers: HashMap<String, String>,
+    pub body: Option<String>,
+    pub concurrent_users: usize,
+    pub requests_per_user: usize,
+    pub delay_between_requests: Duration,
     pub timeout: Duration,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum LoadPattern {
-    Constant,
-    RampUp,
-    Spike,
-    Burst,
-    Random,
-    Realistic,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LoadTestResult {
-    pub total_requests: u64,
-    pub successful_requests: u64,
-    pub failed_requests: u64,
-    pub total_duration: Duration,
-    pub avg_response_time: f64,
-    pub min_response_time: f64,
-    pub max_response_time: f64,
-    pub p50_response_time: f64,
-    pub p95_response_time: f64,
-    pub p99_response_time: f64,
-    pub throughput_tps: f64,
+    pub total_requests: usize,
+    pub successful_requests: usize,
+    pub failed_requests: usize,
+    pub average_response_time: Duration,
+    pub min_response_time: Duration,
+    pub max_response_time: Duration,
+    pub p50_response_time: Duration,
+    pub p95_response_time: Duration,
+    pub p99_response_time: Duration,
+    pub requests_per_second: f64,
     pub error_rate: f64,
-    pub response_times: Vec<f64>,
+    pub status_codes: HashMap<u16, usize>,
     pub errors: Vec<String>,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug)]
 pub struct LoadTester {
-    storage: Arc<PersistentStorage>,
-    config: LoadTestConfig,
+    app: axum::Router,
 }
 
 impl LoadTester {
-    pub fn new(storage: Arc<PersistentStorage>, config: LoadTestConfig) -> Self {
-        Self { storage, config }
+    pub fn new(app: axum::Router) -> Self {
+        Self { app }
     }
-
-    pub async fn run_load_test(&self) -> LoadTestResult {
-        println!("🚀 Starting load test with {} concurrent users", self.config.concurrent_users);
-        
+    
+    pub async fn run_load_test(&self, config: LoadTestConfig) -> LoadTestResult {
         let start_time = Instant::now();
-        let semaphore = Arc::new(Semaphore::new(self.config.concurrent_users as usize));
-        let mut handles = Vec::new();
         let mut response_times = Vec::new();
+        let mut status_codes = HashMap::new();
         let mut errors = Vec::new();
+        let mut successful_requests = 0;
+        let mut failed_requests = 0;
         
-        // Create load pattern
-        let load_pattern = self.generate_load_pattern();
+        // Create tasks for concurrent users
+        let mut tasks = Vec::new();
         
-        for (user_id, delay) in load_pattern.into_iter().enumerate() {
-            let semaphore = semaphore.clone();
-            let storage = self.storage.clone();
-            let config = self.config.clone();
+        for user_id in 0..config.concurrent_users {
+            let app = self.app.clone();
+            let config = config.clone();
             
-            let handle = tokio::spawn(async move {
-                // Wait for ramp-up delay
-                tokio::time::sleep(delay).await;
-                
+            let task = tokio::spawn(async move {
                 let mut user_response_times = Vec::new();
+                let mut user_status_codes = HashMap::new();
                 let mut user_errors = Vec::new();
+                let mut user_successful = 0;
+                let mut user_failed = 0;
                 
                 for request_id in 0..config.requests_per_user {
-                    let _permit = semaphore.acquire().await.unwrap();
-                    
                     let request_start = Instant::now();
-                    let result = Self::execute_request(&storage, user_id, request_id).await;
-                    let response_time = request_start.elapsed().as_millis() as f64;
                     
-                    user_response_times.push(response_time);
+                    // Create request
+                    let method = config.method.parse::<axum::http::Method>().unwrap_or(axum::http::Method::GET);
+                    let mut request_builder = Request::builder()
+                        .method(method)
+                        .uri(&config.endpoint);
                     
-                    if let Err(e) = result {
-                        user_errors.push(format!("User {} Request {}: {}", user_id, request_id, e));
+                    // Add headers
+                    for (key, value) in &config.headers {
+                        request_builder = request_builder.header(key, value);
                     }
                     
-                    // Respect target TPS
-                    if config.target_tps > 0 {
-                        let target_interval = 1000.0 / config.target_tps as f64;
-                        if response_time < target_interval {
-                            tokio::time::sleep(Duration::from_millis((target_interval - response_time) as u64)).await;
+                    // Add body if provided
+                    let body = if let Some(body_content) = &config.body {
+                        Body::from(body_content.clone())
+                    } else {
+                        Body::empty()
+                    };
+                    
+                    let request = request_builder.body(body).unwrap();
+                    
+                    // Send request
+                    let response = app.clone().oneshot(request).await;
+                    
+                    let response_time = request_start.elapsed();
+                    user_response_times.push(response_time);
+                    
+                    match response {
+                        Ok(response) => {
+                            let status = response.status();
+                            *user_status_codes.entry(status.as_u16()).or_insert(0) += 1;
+                            
+                            if status.is_success() {
+                                user_successful += 1;
+                            } else {
+                                user_failed += 1;
+                                user_errors.push(format!("HTTP {}: {}", status.as_u16(), status));
+                            }
                         }
+                        Err(e) => {
+                            user_failed += 1;
+                            user_errors.push(format!("Request failed: {}", e));
+                        }
+                    }
+                    
+                    // Delay between requests
+                    if request_id < config.requests_per_user - 1 {
+                        sleep(config.delay_between_requests).await;
                     }
                 }
                 
-                (user_response_times, user_errors)
+                (user_response_times, user_status_codes, user_errors, user_successful, user_failed)
             });
             
-            handles.push(handle);
+            tasks.push(task);
         }
         
-        // Collect results
-        for handle in handles {
-            if let Ok((user_times, user_errors)) = handle.await {
-                response_times.extend(user_times);
-                errors.extend(user_errors);
+        // Collect results from all tasks
+        for task in tasks {
+            match task.await {
+                Ok((user_response_times, user_status_codes, user_errors, user_successful, user_failed)) => {
+                    response_times.extend(user_response_times);
+                    
+                    for (status, count) in user_status_codes {
+                        *status_codes.entry(status).or_insert(0) += count;
+                    }
+                    
+                    errors.extend(user_errors);
+                    successful_requests += user_successful;
+                    failed_requests += user_failed;
+                }
+                Err(e) => {
+                    errors.push(format!("Task failed: {}", e));
+                    failed_requests += config.requests_per_user;
+                }
             }
         }
         
-        let total_duration = start_time.elapsed();
-        let total_requests = response_times.len() as u64;
-        let failed_requests = errors.len() as u64;
-        let successful_requests = total_requests - failed_requests;
+        let total_requests = successful_requests + failed_requests;
+        let total_time = start_time.elapsed();
         
-        // Calculate percentiles
-        response_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let p50 = Self::percentile(&response_times, 50.0);
-        let p95 = Self::percentile(&response_times, 95.0);
-        let p99 = Self::percentile(&response_times, 99.0);
+        // Calculate statistics
+        response_times.sort();
+        
+        let average_response_time = if !response_times.is_empty() {
+            let total: Duration = response_times.iter().sum();
+            total / response_times.len() as u32
+        } else {
+            Duration::from_millis(0)
+        };
+        
+        let min_response_time = response_times.first().copied().unwrap_or(Duration::from_millis(0));
+        let max_response_time = response_times.last().copied().unwrap_or(Duration::from_millis(0));
+        
+        let p50_idx = (response_times.len() as f64 * 0.5) as usize;
+        let p95_idx = (response_times.len() as f64 * 0.95) as usize;
+        let p99_idx = (response_times.len() as f64 * 0.99) as usize;
+        
+        let p50_response_time = response_times.get(p50_idx).copied().unwrap_or(Duration::from_millis(0));
+        let p95_response_time = response_times.get(p95_idx).copied().unwrap_or(Duration::from_millis(0));
+        let p99_response_time = response_times.get(p99_idx).copied().unwrap_or(Duration::from_millis(0));
+        
+        let requests_per_second = if total_time.as_secs() > 0 {
+            total_requests as f64 / total_time.as_secs() as f64
+        } else {
+            0.0
+        };
+        
+        let error_rate = if total_requests > 0 {
+            failed_requests as f64 / total_requests as f64
+        } else {
+            0.0
+        };
         
         LoadTestResult {
             total_requests,
             successful_requests,
             failed_requests,
-            total_duration,
-            avg_response_time: response_times.iter().sum::<f64>() / response_times.len() as f64,
-            min_response_time: *response_times.first().unwrap_or(&0.0),
-            max_response_time: *response_times.last().unwrap_or(&0.0),
-            p50_response_time: p50,
-            p95_response_time: p95,
-            p99_response_time: p99,
-            throughput_tps: total_requests as f64 / total_duration.as_secs_f64(),
-            error_rate: (failed_requests as f64 / total_requests as f64) * 100.0,
-            response_times,
+            average_response_time,
+            min_response_time,
+            max_response_time,
+            p50_response_time,
+            p95_response_time,
+            p99_response_time,
+            requests_per_second,
+            error_rate,
+            status_codes,
             errors,
-            timestamp: chrono::Utc::now(),
         }
     }
     
-    fn generate_load_pattern(&self) -> Vec<Duration> {
-        match self.config.load_pattern {
-            LoadPattern::Constant => {
-                vec![Duration::from_millis(0); self.config.concurrent_users as usize]
+    pub async fn run_api_load_test(&self) -> Vec<LoadTestResult> {
+        let mut results = Vec::new();
+        
+        // Test wallet balance endpoint
+        let wallet_config = LoadTestConfig {
+            endpoint: "/wallet/balance".to_string(),
+            method: "GET".to_string(),
+            headers: {
+                let mut headers = HashMap::new();
+                headers.insert("Authorization".to_string(), "Bearer test_token".to_string());
+                headers
             },
-            LoadPattern::RampUp => {
-                let interval = self.config.ramp_up_duration / self.config.concurrent_users;
-                (0..self.config.concurrent_users).map(|i| interval * i).collect()
+            body: None,
+            concurrent_users: 10,
+            requests_per_user: 50,
+            delay_between_requests: Duration::from_millis(100),
+            timeout: Duration::from_secs(30),
+        };
+        
+        println!("Testing wallet balance endpoint...");
+        let wallet_result = self.run_load_test(wallet_config).await;
+        results.push(wallet_result);
+        
+        // Test DAG status endpoint
+        let dag_config = LoadTestConfig {
+            endpoint: "/dag/status".to_string(),
+            method: "GET".to_string(),
+            headers: HashMap::new(),
+            body: None,
+            concurrent_users: 20,
+            requests_per_user: 30,
+            delay_between_requests: Duration::from_millis(50),
+            timeout: Duration::from_secs(30),
+        };
+        
+        println!("Testing DAG status endpoint...");
+        let dag_result = self.run_load_test(dag_config).await;
+        results.push(dag_result);
+        
+        // Test trading analytics endpoint
+        let analytics_config = LoadTestConfig {
+            endpoint: "/analytics/trading".to_string(),
+            method: "GET".to_string(),
+            headers: {
+                let mut headers = HashMap::new();
+                headers.insert("Authorization".to_string(), "Bearer test_token".to_string());
+                headers
             },
-            LoadPattern::Spike => {
-                let mut delays = vec![Duration::from_millis(0); self.config.concurrent_users as usize];
-                let spike_users = self.config.concurrent_users / 4;
-                for i in 0..spike_users {
-                    delays[i as usize] = Duration::from_millis(100 * i as u64);
-                }
-                delays
-            },
-            LoadPattern::Burst => {
-                let mut delays = Vec::new();
-                let burst_size = self.config.concurrent_users / 5;
-                for i in 0..self.config.concurrent_users {
-                    let burst_id = i / burst_size;
-                    delays.push(Duration::from_millis(burst_id as u64 * 500));
-                }
-                delays
-            },
-            LoadPattern::Random => {
-                use rand::Rng;
-                let mut rng = rand::thread_rng();
-                (0..self.config.concurrent_users).map(|_| {
-                    Duration::from_millis(rng.gen_range(0..1000))
-                }).collect()
-            },
-            LoadPattern::Realistic => {
-                // Simulate realistic user behavior with think time
-                let mut delays = Vec::new();
-                for i in 0..self.config.concurrent_users {
-                    let base_delay = i * 100; // Staggered start
-                    let think_time = (i % 3) * 200; // Variable think time
-                    delays.push(Duration::from_millis((base_delay + think_time) as u64));
-                }
-                delays
+            body: None,
+            concurrent_users: 5,
+            requests_per_user: 100,
+            delay_between_requests: Duration::from_millis(200),
+            timeout: Duration::from_secs(30),
+        };
+        
+        println!("Testing trading analytics endpoint...");
+        let analytics_result = self.run_load_test(analytics_config).await;
+        results.push(analytics_result);
+        
+        results
+    }
+}
+
+pub fn print_load_test_report(results: &[LoadTestResult]) {
+    println!("\n=== LOAD TEST REPORT ===");
+    println!("Total endpoints tested: {}", results.len());
+    
+    for (i, result) in results.iter().enumerate() {
+        println!("\n--- Endpoint {} ---", i + 1);
+        println!("Total Requests: {}", result.total_requests);
+        println!("Successful: {}", result.successful_requests);
+        println!("Failed: {}", result.failed_requests);
+        println!("Error Rate: {:.2}%", result.error_rate * 100.0);
+        println!("Requests/sec: {:.2}", result.requests_per_second);
+        println!("Average Response Time: {:?}", result.average_response_time);
+        println!("Min Response Time: {:?}", result.min_response_time);
+        println!("Max Response Time: {:?}", result.max_response_time);
+        println!("P50 Response Time: {:?}", result.p50_response_time);
+        println!("P95 Response Time: {:?}", result.p95_response_time);
+        println!("P99 Response Time: {:?}", result.p99_response_time);
+        
+        if !result.status_codes.is_empty() {
+            println!("Status Codes:");
+            for (status, count) in &result.status_codes {
+                println!("  {}: {}", status, count);
+            }
+        }
+        
+        if !result.errors.is_empty() {
+            println!("Errors (first 5):");
+            for error in result.errors.iter().take(5) {
+                println!("  {}", error);
             }
         }
     }
     
-    async fn execute_request(storage: &Arc<PersistentStorage>, user_id: usize, request_id: u32) -> Result<(), String> {
-        // Simulate different types of requests
-        match request_id % 4 {
-            0 => {
-                // Write operation
-                let key = format!("load_test_user_{}_req_{}", user_id, request_id);
-                let value = format!("value_{}_{}", user_id, request_id);
-                storage.store_parameter(&key, &value)
-                    .map_err(|e| format!("Write failed: {}", e))?;
-            },
-            1 => {
-                // Read operation
-                let key = format!("load_test_user_{}_req_{}", user_id, request_id % 100);
-                storage.load_parameter(&key)
-                    .map_err(|e| format!("Read failed: {}", e))?;
-            },
-            2 => {
-                // Block creation simulation
-                let block = Self::create_test_block(user_id, request_id);
-                let _serialized = bincode::serialize(&block)
-                    .map_err(|e| format!("Block serialization failed: {}", e))?;
-            },
-            3 => {
-                // Transaction processing simulation
-                let tx = Self::create_test_transaction(user_id, request_id);
-                let _serialized = bincode::serialize(&tx)
-                    .map_err(|e| format!("Transaction serialization failed: {}", e))?;
-            },
-            _ => unreachable!()
-        }
-        
-        Ok(())
-    }
+    // Summary statistics
+    let total_requests: usize = results.iter().map(|r| r.total_requests).sum();
+    let total_successful: usize = results.iter().map(|r| r.successful_requests).sum();
+    let total_failed: usize = results.iter().map(|r| r.failed_requests).sum();
+    let avg_rps: f64 = results.iter().map(|r| r.requests_per_second).sum::<f64>() / results.len() as f64;
     
-    fn create_test_block(user_id: usize, request_id: u32) -> Block {
-        Block {
-            block_id: [user_id as u8; 32],
-            parent_blocks: vec![],
-            transactions: vec![],
-            findag_time: request_id as u64,
-            hashtimer: [request_id as u8; 32],
-            proposer: Address::random(),
-            signature: Signature::from_bytes(&[0u8; 64]),
-            public_key: VerifyingKey::from_bytes(&[0u8; 32]).unwrap(),
-            shard_id: crate::core::types::ShardId(0),
-            merkle_root: None,
-        }
-    }
-    
-    fn create_test_transaction(user_id: usize, request_id: u32) -> Transaction {
-        Transaction {
-            from: Address::random(),
-            to: Address::random(),
-            amount: request_id as u64,
-            payload: format!("Test transaction {} from user {}", request_id, user_id).into_bytes(),
-            findag_time: request_id as u64,
-            hashtimer: [request_id as u8; 32],
-            signature: Signature::from_bytes(&[0u8; 64]),
-            public_key: VerifyingKey::from_bytes(&[0u8; 32]).unwrap(),
-            shard_id: crate::core::types::ShardId(0),
-            source_shard: None,
-            dest_shard: None,
-            target_chain: None,
-            bridge_protocol: None,
-        }
-    }
-    
-    fn percentile(data: &[f64], percentile: f64) -> f64 {
-        if data.is_empty() {
-            return 0.0;
-        }
-        
-        let index = (percentile / 100.0 * (data.len() - 1) as f64).round() as usize;
-        data[index.min(data.len() - 1)]
-    }
-}
-
-impl LoadTestResult {
-    pub fn print_summary(&self) {
-        println!("📊 Load Test Results Summary");
-        println!("============================");
-        println!("Total Requests: {}", self.total_requests);
-        println!("Successful: {}", self.successful_requests);
-        println!("Failed: {}", self.failed_requests);
-        println!("Error Rate: {:.2}%", self.error_rate);
-        println!("Throughput: {:.2} TPS", self.throughput_tps);
-        println!("Average Response Time: {:.2}ms", self.avg_response_time);
-        println!("Min Response Time: {:.2}ms", self.min_response_time);
-        println!("Max Response Time: {:.2}ms", self.max_response_time);
-        println!("P50 Response Time: {:.2}ms", self.p50_response_time);
-        println!("P95 Response Time: {:.2}ms", self.p95_response_time);
-        println!("P99 Response Time: {:.2}ms", self.p99_response_time);
-        println!("Total Duration: {:.2}s", self.total_duration.as_secs_f64());
-        println!();
-    }
-    
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
+    println!("\n=== SUMMARY ===");
+    println!("Total Requests: {}", total_requests);
+    println!("Total Successful: {}", total_successful);
+    println!("Total Failed: {}", total_failed);
+    println!("Overall Error Rate: {:.2}%", (total_failed as f64 / total_requests as f64) * 100.0);
+    println!("Average Requests/sec: {:.2}", avg_rps);
 } 

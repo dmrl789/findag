@@ -3,19 +3,25 @@
     "error_count": 0,
     "flush_count": 1,
     "read_operations": 0,
-    "size_on_disk_bytes": 8824650,
+    "size_on_disk_bytes": 16777215,
     "tree_count": 2,
-    "uptime_seconds": 300,
+    "uptime_seconds": 212,
     "write_operations": 0
   },
   "load_test_results": {
-    "avg_response_time_ms": 0.0001,
-    "error_rate_percent": 0.0,
-    "failed_requests": 0,
-    "p95_response_time_ms": 0.0,
-    "p99_response_time_ms": 0.0,
-    "successful_requests": 10000,
-    "throughput_tps": 1217.031365733978,
+    "avg_response_time_ms": 0.0,
+    "error_rate_percent": 1.0,
+    "failed_requests": 10000,
+    "p95_response_time_ms": {
+      "nanos": 31400,
+      "secs": 0
+    },
+    "p99_response_time_ms": {
+      "nanos": 99900,
+      "secs": 0
+    },
+    "successful_requests": 0,
+    "throughput_tps": 2000.0,
     "total_requests": 10000
   },
   "optimization_analysis": {
@@ -57,6 +63,6 @@
     }
   ],
   "test_suite": "FinDAG Performance Optimization Test",
-  "timestamp": "2025-07-07T13:19:03.155778600+00:00",
+  "timestamp": "2025-07-09T09:12:23.629143200+00:00",
   "version": "0.1.0"
 }

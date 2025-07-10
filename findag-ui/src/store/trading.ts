@@ -246,7 +246,33 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     setError('placingOrder');
     
     try {
-      const placedOrder = await finDAGApi.placeOrder(order);
+      // Convert MarketOrder to API format
+      const apiOrder = {
+        symbol: order.pair,
+        side: order.side,
+        order_type: order.type,
+        quantity: order.amount,
+        price: order.price,
+        client_order_id: `order-${Date.now()}`,
+        currency: 'USD'
+      };
+      
+      const response = await finDAGApi.placeOrder(apiOrder);
+      
+      // Convert response back to MarketOrder format
+      const placedOrder: MarketOrder = {
+        id: response.order_id,
+        pair: order.pair,
+        side: order.side,
+        amount: order.amount,
+        price: order.price,
+        type: order.type,
+        status: response.status as any,
+        timestamp: Date.now(),
+        user: order.user || 'current-user',
+        filledAmount: 0,
+        averagePrice: 0,
+      };
       
       // Refresh user orders after placing new order
       if (order.user) {

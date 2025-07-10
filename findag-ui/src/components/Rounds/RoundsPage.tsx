@@ -18,26 +18,29 @@ export const RoundsPage: React.FC = () => {
   const mockRounds: Round[] = [
     {
       number: 45678,
-      startTime: Date.now() - 30000,
-      endTime: Date.now() - 5000,
-      validators: ['validator-01', 'validator-02', 'validator-03'],
-      finalizedBlocks: ['block-001', 'block-002', 'block-003'],
+      startTime: Date.now() - 60000,
+      endTime: Date.now(),
+      validators: ['validator-01', 'validator-02'],
+      finalizedBlocks: ['block-45678', 'block-45679'],
+      transactionCount: 1250,
       status: 'finalized'
     },
     {
       number: 45677,
-      startTime: Date.now() - 60000,
-      endTime: Date.now() - 35000,
-      validators: ['validator-01', 'validator-02', 'validator-04'],
-      finalizedBlocks: ['block-004', 'block-005'],
+      startTime: Date.now() - 120000,
+      endTime: Date.now() - 60000,
+      validators: ['validator-02', 'validator-03'],
+      finalizedBlocks: ['block-45676', 'block-45677'],
+      transactionCount: 1180,
       status: 'finalized'
     },
     {
       number: 45676,
-      startTime: Date.now() - 90000,
-      endTime: Date.now() - 65000,
-      validators: ['validator-01', 'validator-03', 'validator-04'],
-      finalizedBlocks: ['block-006', 'block-007', 'block-008'],
+      startTime: Date.now() - 180000,
+      endTime: Date.now() - 120000,
+      validators: ['validator-01', 'validator-03'],
+      finalizedBlocks: ['block-45674', 'block-45675'],
+      transactionCount: 1320,
       status: 'finalized'
     }
   ];

@@ -3,6 +3,7 @@ use serde::{Serialize, Deserialize};
 use crate::storage::PersistentStorage;
 use super::load_tester::LoadTestResult;
 use super::performance_profiler::PerformanceProfile;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationRecommendation {
@@ -117,12 +118,12 @@ impl OptimizationAnalyzer {
         let mut recommendations = Vec::new();
         
         // Analyze response times
-        if results.p95_response_time > 100.0 {
+        if results.p95_response_time > Duration::from_millis(100) {
             recommendations.push(OptimizationRecommendation {
                 category: OptimizationCategory::Performance,
                 priority: Priority::High,
                 title: "High P95 Response Time".to_string(),
-                description: format!("P95 response time is {:.2}ms, which is above the 100ms threshold", results.p95_response_time),
+                description: format!("P95 response time is {:?}, which is above the 100ms threshold", results.p95_response_time),
                 impact: Impact::High,
                 effort: Effort::Medium,
                 suggested_actions: vec![
@@ -155,12 +156,12 @@ impl OptimizationAnalyzer {
         }
         
         // Analyze throughput
-        if results.throughput_tps < 1000.0 {
+        if results.requests_per_second < 1000.0 {
             recommendations.push(OptimizationRecommendation {
                 category: OptimizationCategory::Performance,
                 priority: Priority::Medium,
                 title: "Low Throughput".to_string(),
-                description: format!("Throughput is {:.2} TPS, target is 1000+ TPS", results.throughput_tps),
+                description: format!("Throughput is {:.2} req/s, target is 1000+ req/s", results.requests_per_second),
                 impact: Impact::Medium,
                 effort: Effort::High,
                 suggested_actions: vec![
@@ -169,7 +170,7 @@ impl OptimizationAnalyzer {
                     "Review memory allocation patterns".to_string(),
                     "Consider horizontal scaling".to_string(),
                 ],
-                expected_improvement: "Increase throughput to 1000+ TPS".to_string(),
+                expected_improvement: "Increase throughput to 1000+ req/s".to_string(),
             });
         }
         

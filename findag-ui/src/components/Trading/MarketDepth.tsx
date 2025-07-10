@@ -11,6 +11,7 @@ import {
   EyeOff
 } from 'lucide-react';
 import { OrderBook, OrderBookEntry } from '../../types';
+import { finDAGApi } from '../../services/api';
 
 interface MarketDepthProps {
   orderBook: OrderBook | null;
@@ -29,63 +30,26 @@ export const MarketDepth: React.FC<MarketDepthProps> = ({
   const [priceRange, setPriceRange] = useState(5); // percentage
   const [loading, setLoading] = useState(false);
 
-  // Mock data - in real app this would come from API
+  // Use real order book data from props
   useEffect(() => {
-    if (!orderBook) {
-      // Generate mock order book data
-      const mockOrderBook: OrderBook = {
-        pair: pair,
-        bids: [],
-        asks: [],
-        lastUpdateId: Date.now(),
-      };
-
-      // Generate bids (buy orders)
-      const basePrice = 50000; // Mock base price
-      for (let i = 0; i < 50; i++) {
-        const price = basePrice - (i * 10);
-        const amount = Math.random() * 2 + 0.1;
-        const total = mockOrderBook.bids.length > 0 
-          ? mockOrderBook.bids[mockOrderBook.bids.length - 1].total + amount
-          : amount;
-        
-        mockOrderBook.bids.push({
-          price,
-          amount,
-          total,
-        });
-      }
-
-      // Generate asks (sell orders)
-      for (let i = 0; i < 50; i++) {
-        const price = basePrice + (i * 10);
-        const amount = Math.random() * 2 + 0.1;
-        const total = mockOrderBook.asks.length > 0 
-          ? mockOrderBook.asks[mockOrderBook.asks.length - 1].total + amount
-          : amount;
-        
-        mockOrderBook.asks.push({
-          price,
-          amount,
-          total,
-        });
-      }
-
-      // Sort bids in descending order and asks in ascending order
-      mockOrderBook.bids.sort((a, b) => b.price - a.price);
-      mockOrderBook.asks.sort((a, b) => a.price - b.price);
-
-      setOrderBook(mockOrderBook);
+    if (orderBook) {
+      setOrderBook(orderBook);
     }
-  }, [orderBook, pair]);
+  }, [orderBook]);
 
   const [currentOrderBook, setOrderBook] = useState<OrderBook | null>(orderBook);
 
   const handleRefresh = async () => {
     setLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setLoading(false);
+    try {
+      // Refresh order book data from backend
+      const refreshedOrderBook = await finDAGApi.getOrderBook(pair, depth);
+      setOrderBook(refreshedOrderBook);
+    } catch (error) {
+      console.error('Failed to refresh order book:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getSpread = () => {

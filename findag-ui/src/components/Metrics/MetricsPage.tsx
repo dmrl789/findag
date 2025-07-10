@@ -1,53 +1,87 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, TrendingUp, Activity, Zap, Clock, Database, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useAppStore } from '../../store';
-import { NetworkMetrics, NodeMetrics } from '../../types';
 import { formatNumber, formatLatency, formatUptime } from '../../utils/formatters';
+import { finDAGApi } from '../../services/api';
+
+interface TimeSeriesData {
+  timestamp: number;
+  value: number;
+}
+
+interface PerformanceTimeSeries {
+  tps: TimeSeriesData[];
+  latency: TimeSeriesData[];
+  nodes: TimeSeriesData[];
+  blocks: TimeSeriesData[];
+  message: string;
+}
 
 export const MetricsPage: React.FC = () => {
   const { networkMetrics, nodeMetrics, isLoading, fetchNetworkMetrics, fetchNodeMetrics } = useAppStore();
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '24h' | '7d'>('24h');
   const [selectedMetric, setSelectedMetric] = useState<string>('tps');
+  const [timeSeriesData, setTimeSeriesData] = useState<PerformanceTimeSeries | null>(null);
+  const [isLoadingTimeSeries, setIsLoadingTimeSeries] = useState(false);
+  const [timeSeriesError, setTimeSeriesError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchNetworkMetrics();
     fetchNodeMetrics();
   }, [fetchNetworkMetrics, fetchNodeMetrics]);
 
-  const getMetricData = () => {
-    // Mock data for demonstration - in real app this would come from time-series data
-    const now = Date.now();
-    const dataPoints = 24; // 24 data points for 24h view
-    const data = [];
+  useEffect(() => {
+    fetchTimeSeriesData();
+  }, [timeRange]);
+
+  const fetchTimeSeriesData = async () => {
+    setIsLoadingTimeSeries(true);
+    setTimeSeriesError(null);
     
-    for (let i = dataPoints - 1; i >= 0; i--) {
-      const timestamp = now - (i * 3600000); // 1 hour intervals
-      let value = 0;
-      
-      switch (selectedMetric) {
-        case 'tps':
-          value = 1000000 + Math.random() * 500000; // 1M-1.5M TPS
-          break;
-        case 'latency':
-          value = 30 + Math.random() * 40; // 30-70ms latency
-          break;
-        case 'nodes':
-          value = 10 + Math.floor(Math.random() * 5); // 10-15 nodes
-          break;
-        case 'blocks':
-          value = 100 + Math.random() * 200; // 100-300 blocks
-          break;
-        default:
-          value = Math.random() * 1000;
-      }
-      
-      data.push({ timestamp, value });
+    try {
+      const data = await finDAGApi.getPerformanceMetricsTimeSeries(timeRange);
+      setTimeSeriesData(data);
+    } catch (error) {
+      console.error('Failed to fetch time-series data:', error);
+      setTimeSeriesError('Failed to load performance data');
+    } finally {
+      setIsLoadingTimeSeries(false);
     }
+  };
+
+  const getMetricData = (): TimeSeriesData[] => {
+    if (!timeSeriesData) return [];
     
-    return data;
+    switch (selectedMetric) {
+      case 'tps':
+        return timeSeriesData.tps;
+      case 'latency':
+        return timeSeriesData.latency;
+      case 'nodes':
+        return timeSeriesData.nodes;
+      case 'blocks':
+        return timeSeriesData.blocks;
+      default:
+        return timeSeriesData.tps;
+    }
   };
 
   const metricData = getMetricData();
+
+  const getMetricLabel = (metric: string): string => {
+    switch (metric) {
+      case 'tps':
+        return 'Transactions Per Second';
+      case 'latency':
+        return 'Latency (ms)';
+      case 'nodes':
+        return 'Active Nodes';
+      case 'blocks':
+        return 'Blocks Produced';
+      default:
+        return metric.toUpperCase();
+    }
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -190,14 +224,26 @@ export const MetricsPage: React.FC = () => {
         
         {/* Chart Placeholder */}
         <div className="bg-gray-50 rounded-lg h-64 flex items-center justify-center">
-          <div className="text-center">
-            <TrendingUp className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-            <p className="text-gray-600">Performance chart for {selectedMetric.toUpperCase()}</p>
-            <p className="text-sm text-gray-500">Time range: {timeRange}</p>
-            <div className="mt-4 text-xs text-gray-500">
-              {metricData.length} data points available
+          {isLoadingTimeSeries ? (
+            <div className="text-center">
+              <TrendingUp className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+              <p className="text-gray-600">Loading performance data...</p>
             </div>
-          </div>
+          ) : timeSeriesError ? (
+            <div className="text-center">
+              <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-2" />
+              <p className="text-gray-600">{timeSeriesError}</p>
+            </div>
+          ) : (
+            <div className="text-center">
+              <TrendingUp className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+              <p className="text-gray-600">Performance chart for {getMetricLabel(selectedMetric).toLowerCase()}</p>
+              <p className="text-sm text-gray-500">Time range: {timeRange}</p>
+              <div className="mt-4 text-xs text-gray-500">
+                {metricData.length} data points available
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

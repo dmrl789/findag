@@ -5,10 +5,11 @@ use findag::performance::{
     OptimizationAnalyzer,
     BenchmarkSuite,
 };
-use findag::performance::load_tester::{LoadTestConfig, LoadPattern};
+use findag::performance::load_tester::LoadTestConfig;
 use findag::performance::benchmark_suite::BenchmarkConfig;
 use std::sync::Arc;
 use std::time::Duration;
+use std::collections::HashMap;
 use serde_json::json;
 
 #[tokio::main]
@@ -50,34 +51,35 @@ async fn test_basic_load_testing(storage: &Arc<findag::storage::PersistentStorag
     
     // Test different load patterns
     let load_patterns = vec![
-        (LoadPattern::Constant, "Constant Load"),
-        (LoadPattern::RampUp, "Ramp Up Load"),
-        (LoadPattern::Spike, "Spike Load"),
-        (LoadPattern::Burst, "Burst Load"),
-        (LoadPattern::Random, "Random Load"),
-        (LoadPattern::Realistic, "Realistic Load"),
+        ("constant", "Constant Load"),
+        ("ramp_up", "Ramp Up Load"),
+        ("spike", "Spike Load"),
+        ("burst", "Burst Load"),
+        ("random", "Random Load"),
+        ("realistic", "Realistic Load"),
     ];
     
-    for (pattern, name) in load_patterns {
+    for (_pattern, name) in load_patterns {
         println!("    Testing {}...", name);
         
         let config = LoadTestConfig {
+            endpoint: "/api/test".to_string(),
+            method: "GET".to_string(),
+            headers: HashMap::new(),
+            body: None,
             concurrent_users: 20,
             requests_per_user: 50,
-            ramp_up_duration: Duration::from_secs(5),
-            test_duration: Duration::from_secs(30),
-            target_tps: 200,
-            load_pattern: pattern,
+            delay_between_requests: Duration::from_millis(100),
             timeout: Duration::from_secs(10),
         };
         
-        let load_tester = LoadTester::new(storage.clone(), config);
-        let result = load_tester.run_load_test().await;
+        let load_tester = LoadTester::new(axum::Router::new());
+        let result = load_tester.run_load_test(config).await;
         
-        println!("      Throughput: {:.2} TPS", result.throughput_tps);
-        println!("      Avg Response Time: {:.2}ms", result.avg_response_time);
+        println!("      Throughput: {:.2} TPS", result.requests_per_second);
+        println!("      Avg Response Time: {:.2}ms", result.average_response_time.as_millis() as f64);
         println!("      Error Rate: {:.2}%", result.error_rate);
-        println!("      P95 Response Time: {:.2}ms", result.p95_response_time);
+        println!("      P95 Response Time: {:.2}ms", result.p95_response_time.as_millis() as f64);
     }
 }
 
@@ -111,17 +113,18 @@ async fn test_optimization_analysis(storage: &Arc<findag::storage::PersistentSto
     
     // Run a load test
     let load_config = LoadTestConfig {
+        endpoint: "/api/test".to_string(),
+        method: "GET".to_string(),
+        headers: HashMap::new(),
+        body: None,
         concurrent_users: 30,
         requests_per_user: 100,
-        ramp_up_duration: Duration::from_secs(5),
-        test_duration: Duration::from_secs(45),
-        target_tps: 300,
-        load_pattern: LoadPattern::Realistic,
+        delay_between_requests: Duration::from_millis(50),
         timeout: Duration::from_secs(15),
     };
     
-    let load_tester = LoadTester::new(storage.clone(), load_config);
-    let load_result = load_tester.run_load_test().await;
+    let load_tester = LoadTester::new(axum::Router::new());
+    let load_result = load_tester.run_load_test(load_config).await;
     
     // Run performance profiling
     let profiler = PerformanceProfiler::new(Duration::from_millis(1000));
@@ -153,12 +156,13 @@ async fn test_benchmark_suite(storage: &Arc<findag::storage::PersistentStorage>)
         name: "Custom Performance Test".to_string(),
         description: "Custom benchmark for specific performance requirements".to_string(),
         load_test_config: LoadTestConfig {
+            endpoint: "/api/test".to_string(),
+            method: "GET".to_string(),
+            headers: HashMap::new(),
+            body: None,
             concurrent_users: 40,
             requests_per_user: 150,
-            ramp_up_duration: Duration::from_secs(8),
-            test_duration: Duration::from_secs(60),
-            target_tps: 400,
-            load_pattern: LoadPattern::RampUp,
+            delay_between_requests: Duration::from_millis(25),
             timeout: Duration::from_secs(12),
         },
         profiling_interval: Duration::from_millis(750),
@@ -211,17 +215,18 @@ async fn generate_comprehensive_report(
     
     // Run a comprehensive load test
     let comprehensive_config = LoadTestConfig {
+        endpoint: "/api/test".to_string(),
+        method: "GET".to_string(),
+        headers: HashMap::new(),
+        body: None,
         concurrent_users: 50,
         requests_per_user: 200,
-        ramp_up_duration: Duration::from_secs(10),
-        test_duration: Duration::from_secs(90),
-        target_tps: 500,
-        load_pattern: LoadPattern::Realistic,
+        delay_between_requests: Duration::from_millis(20),
         timeout: Duration::from_secs(20),
     };
     
-    let load_tester = LoadTester::new(storage.clone(), comprehensive_config);
-    let load_result = load_tester.run_load_test().await;
+    let load_tester = LoadTester::new(axum::Router::new());
+    let load_result = load_tester.run_load_test(comprehensive_config).await;
     
     // Run comprehensive profiling
     let profiler = PerformanceProfiler::new(Duration::from_millis(250));
@@ -253,8 +258,8 @@ async fn generate_comprehensive_report(
             "total_requests": load_result.total_requests,
             "successful_requests": load_result.successful_requests,
             "failed_requests": load_result.failed_requests,
-            "throughput_tps": load_result.throughput_tps,
-            "avg_response_time_ms": load_result.avg_response_time,
+            "throughput_tps": load_result.requests_per_second,
+            "avg_response_time_ms": load_result.average_response_time.as_millis() as f64,
             "p95_response_time_ms": load_result.p95_response_time,
             "p99_response_time_ms": load_result.p99_response_time,
             "error_rate_percent": load_result.error_rate
@@ -306,7 +311,7 @@ async fn generate_comprehensive_report(
     // Print summary
     println!("  📊 Performance Summary:");
     println!("    Load Test: {:.2} TPS, {:.2}ms avg response time, {:.2}% error rate", 
-        load_result.throughput_tps, load_result.avg_response_time, load_result.error_rate);
+        load_result.requests_per_second, load_result.average_response_time.as_millis() as f64, load_result.error_rate);
     println!("    CPU Usage: {:.2}% avg, {:.2}% max", 
         performance_profile.summary.avg_cpu_usage, performance_profile.summary.max_cpu_usage);
     println!("    Memory Usage: {:.2} MB avg, {:.2} MB max", 

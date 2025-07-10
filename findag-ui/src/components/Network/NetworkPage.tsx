@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Network, Wifi, Activity, Globe, Server, Users } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { NodeMetrics } from '../../types';
-import { formatNumber, formatLatency, formatUptime } from '../../utils/formatters';
+import { formatNumber, formatLatency, formatUptime, formatTimestamp } from '../../utils/formatters';
 
 export const NetworkPage: React.FC = () => {
   const { nodeMetrics, isLoading, fetchNodeMetrics } = useAppStore();

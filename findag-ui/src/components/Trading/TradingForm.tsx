@@ -53,7 +53,26 @@ export const TradingForm: React.FC<TradingFormProps> = ({ pair, onOrderPlaced })
         user: 'current-user', // This would come from authentication
       };
 
-      const placedOrder = await finDAGApi.placeOrder(order);
+      // Convert to API format
+      const apiOrder = {
+        symbol: order.pair,
+        side: order.side,
+        order_type: order.type,
+        quantity: order.amount,
+        price: order.price,
+        client_order_id: `order-${Date.now()}`,
+        currency: 'USD'
+      };
+      
+      const response = await finDAGApi.placeOrder(apiOrder);
+      const placedOrder = {
+        ...order,
+        id: response.order_id,
+        status: response.status,
+        timestamp: Date.now(),
+        filledAmount: 0,
+        averagePrice: 0,
+      };
       console.log('Order placed successfully:', placedOrder);
       
       // Reset form

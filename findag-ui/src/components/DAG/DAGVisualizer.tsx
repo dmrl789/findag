@@ -1,6 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { EnhancedDAGVisualizer, DAGNode } from './EnhancedDAGVisualizer';
 import { TransactionDetailsModal, Transaction } from './TransactionDetailsModal';
+import { finDAGApi } from '../../services/api';
+import { useNotifications, createNotification } from '../Common/NotificationSystem';
 
 interface DAGVisualizerProps {
   data: {
@@ -16,30 +18,50 @@ export const DAGVisualizer: React.FC<DAGVisualizerProps> = ({ data, className = 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
 
-  const handleNodeClick = useCallback((node: DAGNode) => {
+  const { addNotification } = useNotifications();
+
+  const handleNodeClick = useCallback(async (node: DAGNode) => {
     setSelectedNode(node);
     setShowTransactionModal(true);
     
-    // Simulate loading transactions for the selected node
+    // Load real transactions for the selected node from backend
     setLoadingTransactions(true);
-    setTimeout(() => {
-      // Generate mock transactions for the node
-      const mockTransactions: Transaction[] = Array.from({ length: node.transactionCount }, (_, i) => ({
-        id: `${node.id}-tx-${i}`,
-        hash: `0x${Math.random().toString(16).substring(2, 66)}`,
-        from: `0x${Math.random().toString(16).substring(2, 42)}`,
-        to: `0x${Math.random().toString(16).substring(2, 42)}`,
-        amount: (Math.random() - 0.5) * 1000,
-        currency: 'USD',
-        timestamp: node.timestamp - Math.random() * 60000,
-        status: Math.random() > 0.1 ? 'confirmed' : 'pending',
-        fee: Math.random() * 10,
-        nonce: i,
+    try {
+      // Fetch transactions for this block/node from backend
+      const response = await finDAGApi.getTransactions(1, 100); // Get first 100 transactions
+      
+      // Convert API response to Transaction format
+      const realTransactions: Transaction[] = response.data.map((tx: any) => ({
+        id: tx.id,
+        hash: tx.hash,
+        from: tx.from,
+        to: tx.to,
+        amount: tx.amount,
+        currency: tx.asset || 'USD',
+        timestamp: typeof tx.timestamp === 'object' ? tx.timestamp.timestamp : tx.timestamp,
+        status: tx.status,
+        fee: tx.fee || 0,
+        nonce: parseInt(tx.id) || 0,
       }));
-      setTransactions(mockTransactions);
+      
+      setTransactions(realTransactions);
+      
+      addNotification(createNotification.success(
+        'Transactions Loaded',
+        `Loaded ${realTransactions.length} transactions for block ${node.id}`,
+        { category: 'trading' }
+      ));
+    } catch (error: any) {
+      addNotification(createNotification.error(
+        'Transaction Error',
+        error.message || 'Failed to load transactions',
+        { category: 'trading' }
+      ));
+      setTransactions([]);
+    } finally {
       setLoadingTransactions(false);
-    }, 1000);
-  }, []);
+    }
+  }, [addNotification]);
 
   const handleNodeDoubleClick = useCallback((node: DAGNode) => {
     // Handle double-click - could open detailed view or perform other actions

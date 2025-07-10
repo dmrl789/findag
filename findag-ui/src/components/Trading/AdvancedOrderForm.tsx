@@ -10,6 +10,8 @@ import {
   Calculator
 } from 'lucide-react';
 import { MarketOrder } from '../../types';
+import { finDAGApi } from '../../services/api';
+import { useNotifications, createNotification } from '../Common/NotificationSystem';
 
 export interface AdvancedOrder {
   id: string;
@@ -46,6 +48,7 @@ export const AdvancedOrderForm: React.FC<AdvancedOrderFormProps> = ({
   onCancel,
   className = '',
 }) => {
+  const { addNotification } = useNotifications();
   const [orderType, setOrderType] = useState<AdvancedOrder['type']>('limit');
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [amount, setAmount] = useState('');
@@ -118,8 +121,31 @@ export const AdvancedOrderForm: React.FC<AdvancedOrderFormProps> = ({
     setLoading(true);
 
     try {
+      // Convert to API format
+      const apiOrder = {
+        symbol: pair,
+        side: side,
+        order_type: orderType,
+        quantity: parseFloat(amount),
+        price: price ? parseFloat(price) : undefined,
+        stop_price: stopPrice ? parseFloat(stopPrice) : undefined,
+        take_profit_price: takeProfitPrice ? parseFloat(takeProfitPrice) : undefined,
+        trailing_stop_percent: trailingStopPercent ? parseFloat(trailingStopPercent) : undefined,
+        time_in_force: timeInForce,
+        post_only: postOnly,
+        reduce_only: reduceOnly,
+        iceberg: iceberg,
+        iceberg_amount: icebergAmount ? parseFloat(icebergAmount) : undefined,
+        valid_until: validUntil ? new Date(validUntil).getTime() : undefined,
+        client_order_id: `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        currency: 'USD'
+      };
+
+      // Call backend API
+      const response = await finDAGApi.placeOrder(apiOrder);
+
       const order: AdvancedOrder = {
-        id: `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: response.order_id,
         pair,
         side,
         type: orderType,
@@ -138,13 +164,24 @@ export const AdvancedOrderForm: React.FC<AdvancedOrderFormProps> = ({
         timestamp: Date.now(),
       };
 
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      addNotification(createNotification.success(
+        'Order Placed',
+        `${side.toUpperCase()} ${amount} ${pair} ${orderType} order placed successfully`,
+        { category: 'order' }
+      ));
 
       onOrderPlaced?.(order);
-    } catch (error) {
+    } catch (error: any) {
+      const errorMessage = error.message || 'Failed to place order. Please try again.';
+      setErrors({ submit: errorMessage });
+      
+      addNotification(createNotification.error(
+        'Order Failed',
+        errorMessage,
+        { category: 'order' }
+      ));
+      
       console.error('Failed to place order:', error);
-      setErrors({ submit: 'Failed to place order. Please try again.' });
     } finally {
       setLoading(false);
     }

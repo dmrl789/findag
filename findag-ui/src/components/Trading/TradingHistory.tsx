@@ -12,6 +12,8 @@ import {
   Clock
 } from 'lucide-react';
 import { Trade, MarketOrder } from '../../types';
+import { finDAGApi } from '../../services/api';
+import { useNotifications, createNotification } from '../Common/NotificationSystem';
 
 export interface TradingHistoryItem {
   id: string;
@@ -46,96 +48,50 @@ export const TradingHistory: React.FC<TradingHistoryProps> = ({ className = '' }
   const [sortBy, setSortBy] = useState<'timestamp' | 'amount' | 'price' | 'total'>('timestamp');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
-  // Mock data - in real app this would come from API
-  useEffect(() => {
-    const mockHistory: TradingHistoryItem[] = [
-      {
-        id: '1',
-        type: 'trade',
-        pair: 'BTC/USD',
-        side: 'buy',
-        amount: 0.5,
-        price: 52000,
-        total: 26000,
-        fee: 26,
-        timestamp: Date.now() - 3600000, // 1 hour ago
-        status: 'completed',
-        tradeId: 'trade_001',
-      },
-      {
-        id: '2',
-        type: 'order',
-        pair: 'ETH/USD',
-        side: 'sell',
-        amount: 2.5,
-        price: 3800,
-        total: 9500,
-        fee: 9.5,
-        timestamp: Date.now() - 7200000, // 2 hours ago
-        status: 'completed',
-        orderType: 'limit',
-        orderId: 'order_002',
-      },
-      {
-        id: '3',
-        type: 'trade',
-        pair: 'ADA/USD',
-        side: 'buy',
-        amount: 1000,
-        price: 0.42,
-        total: 420,
-        fee: 0.42,
-        timestamp: Date.now() - 10800000, // 3 hours ago
-        status: 'completed',
-        tradeId: 'trade_003',
-      },
-      {
-        id: '4',
-        type: 'order',
-        pair: 'BTC/USD',
-        side: 'sell',
-        amount: 0.25,
-        price: 52500,
-        total: 13125,
-        fee: 13.125,
-        timestamp: Date.now() - 14400000, // 4 hours ago
-        status: 'cancelled',
-        orderType: 'limit',
-        orderId: 'order_004',
-      },
-      {
-        id: '5',
-        type: 'trade',
-        pair: 'DOT/USD',
-        side: 'buy',
-        amount: 50,
-        price: 22.3,
-        total: 1115,
-        fee: 1.115,
-        timestamp: Date.now() - 18000000, // 5 hours ago
-        status: 'completed',
-        tradeId: 'trade_005',
-      },
-      {
-        id: '6',
-        type: 'order',
-        pair: 'ETH/USD',
-        side: 'buy',
-        amount: 1.5,
-        price: 3750,
-        total: 5625,
-        fee: 5.625,
-        timestamp: Date.now() - 21600000, // 6 hours ago
-        status: 'pending',
-        orderType: 'stop-limit',
-        orderId: 'order_006',
-      },
-    ];
+  const { addNotification } = useNotifications();
 
-    setHistory(mockHistory);
-    setFilteredHistory(mockHistory);
-    setLoading(false);
-  }, []);
+  // Fetch history from backend
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        setLoading(true);
+        const response = await finDAGApi.getTradeHistory();
+        
+        // Convert API response to TradingHistoryItem format
+        const historyItems: TradingHistoryItem[] = response.trades.map(trade => ({
+          id: trade.trade_id,
+          type: 'trade',
+          pair: trade.symbol,
+          side: trade.side as 'buy' | 'sell',
+          amount: trade.quantity,
+          price: trade.price,
+          total: trade.quantity * trade.price,
+          fee: trade.fee,
+          timestamp: trade.timestamp,
+          status: 'completed',
+          tradeId: trade.trade_id,
+          orderId: trade.order_id,
+        }));
+        
+        setHistory(historyItems);
+        setFilteredHistory(historyItems);
+      } catch (error: any) {
+        addNotification(createNotification.error(
+          'History Error',
+          error.message || 'Failed to fetch trading history',
+          { category: 'trading' }
+        ));
+        setHistory([]);
+        setFilteredHistory([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHistory();
+    const interval = setInterval(fetchHistory, 5000); // Poll every 5 seconds
+    return () => clearInterval(interval);
+  }, [addNotification]);
 
   // Filter and sort history
   useEffect(() => {
@@ -238,9 +194,42 @@ export const TradingHistory: React.FC<TradingHistoryProps> = ({ className = '' }
 
   const handleRefresh = async () => {
     setLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setLoading(false);
+    try {
+      const response = await finDAGApi.getTradeHistory();
+      
+      // Convert API response to TradingHistoryItem format
+      const historyItems: TradingHistoryItem[] = response.trades.map(trade => ({
+        id: trade.trade_id,
+        type: 'trade',
+        pair: trade.symbol,
+        side: trade.side as 'buy' | 'sell',
+        amount: trade.quantity,
+        price: trade.price,
+        total: trade.quantity * trade.price,
+        fee: trade.fee,
+        timestamp: trade.timestamp,
+        status: 'completed',
+        tradeId: trade.trade_id,
+        orderId: trade.order_id,
+      }));
+      
+      setHistory(historyItems);
+      setFilteredHistory(historyItems);
+      
+      addNotification(createNotification.success(
+        'History Refreshed',
+        'Trading history updated successfully',
+        { category: 'trading' }
+      ));
+    } catch (error: any) {
+      addNotification(createNotification.error(
+        'Refresh Error',
+        error.message || 'Failed to refresh trading history',
+        { category: 'trading' }
+      ));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleExport = () => {

@@ -5,10 +5,11 @@ import { AccessibilityProvider } from './components/Common/AccessibilityProvider
 import { TimezoneProvider } from './components/Common/TimezoneProvider';
 import { PerformanceProvider } from './components/Common/PerformanceOptimizer';
 import { NotificationProvider, NotificationCenter } from './components/Common/NotificationSystem';
+import { PerformanceMonitor } from './components/Common/PerformanceMonitor';
 import { Sidebar } from './components/Layout/Sidebar';
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { TradingView } from './components/Trading/TradingView';
-import { DAGVisualizer } from './components/DAG/DAGVisualizer';
+import { DAGPage } from './components/DAG/DAGPage';
 import { TransactionsPage } from './components/Transactions/TransactionsPage';
 import { ValidatorsPage } from './components/Validators/ValidatorsPage';
 import { RoundsPage } from './components/Rounds/RoundsPage';
@@ -66,7 +67,7 @@ function App() {
                             <Routes>
                               <Route path="/" element={<Dashboard />} />
                               <Route path="/trading" element={<TradingView pair="BTC/USD" />} />
-                              <Route path="/dag" element={<DAGVisualizer data={{ nodes: [], edges: [] }} />} />
+                              <Route path="/dag" element={<DAGPage />} />
                               <Route path="/transactions" element={<TransactionsPage />} />
                               <Route path="/validators" element={<ValidatorsPage />} />
                               <Route path="/rounds" element={<RoundsPage />} />
@@ -76,6 +77,9 @@ function App() {
                           </main>
                         </div>
                       </div>
+                      
+                      {/* Performance Monitor */}
+                      <PerformanceMonitor />
                     </Router>
                   </KeyboardShortcuts>
                 </LoadingProvider>

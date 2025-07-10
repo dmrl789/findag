@@ -12,6 +12,8 @@ import {
   EyeOff
 } from 'lucide-react';
 import { Asset, Trade } from '../../types';
+import { finDAGApi } from '../../services/api';
+import { useNotifications, createNotification } from '../Common/NotificationSystem';
 
 export interface PortfolioAsset {
   asset: string;
@@ -52,67 +54,63 @@ export const PortfolioTracker: React.FC<PortfolioTrackerProps> = ({ className = 
   const [sortBy, setSortBy] = useState<'value' | 'pnl' | 'pnlPercent' | 'name'>('value');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
-  // Mock data - in real app this would come from API
-  useEffect(() => {
-    const mockAssets: PortfolioAsset[] = [
-      {
-        asset: 'BTC',
-        symbol: 'BTC',
-        name: 'Bitcoin',
-        quantity: 2.5,
-        averagePrice: 45000,
-        currentPrice: 52000,
-        marketValue: 130000,
-        unrealizedPnL: 17500,
-        unrealizedPnLPercent: 15.56,
-        costBasis: 112500,
-        lastUpdated: Date.now(),
-      },
-      {
-        asset: 'ETH',
-        symbol: 'ETH',
-        name: 'Ethereum',
-        quantity: 15.8,
-        averagePrice: 3200,
-        currentPrice: 3800,
-        marketValue: 60040,
-        unrealizedPnL: 9480,
-        unrealizedPnLPercent: 18.75,
-        costBasis: 50560,
-        lastUpdated: Date.now(),
-      },
-      {
-        asset: 'ADA',
-        symbol: 'ADA',
-        name: 'Cardano',
-        quantity: 5000,
-        averagePrice: 0.45,
-        currentPrice: 0.42,
-        marketValue: 2100,
-        unrealizedPnL: -150,
-        unrealizedPnLPercent: -6.67,
-        costBasis: 2250,
-        lastUpdated: Date.now(),
-      },
-      {
-        asset: 'DOT',
-        symbol: 'DOT',
-        name: 'Polkadot',
-        quantity: 200,
-        averagePrice: 18.5,
-        currentPrice: 22.3,
-        marketValue: 4460,
-        unrealizedPnL: 760,
-        unrealizedPnLPercent: 20.54,
-        costBasis: 3700,
-        lastUpdated: Date.now(),
-      },
-    ];
+  const { addNotification } = useNotifications();
 
-    setAssets(mockAssets);
-    calculateMetrics(mockAssets);
-    setLoading(false);
-  }, []);
+  // Fetch portfolio data from backend
+  useEffect(() => {
+    const fetchPortfolioData = async () => {
+      try {
+        setLoading(true);
+        
+        // Fetch wallet balance and portfolio data from backend
+        const [balanceResponse, portfolioReport] = await Promise.all([
+          finDAGApi.getWalletBalance(),
+          finDAGApi.getPortfolioReport()
+        ]);
+
+        // Convert API response to PortfolioAsset format
+        const portfolioAssets: PortfolioAsset[] = portfolioReport.holdings.map(holding => {
+          const assetInfo = balanceResponse.balances.find(b => b.asset === holding.asset);
+          const quantity = assetInfo ? assetInfo.amount : holding.amount;
+          
+          return {
+            asset: holding.asset,
+            symbol: holding.asset,
+            name: holding.asset, // In real app, this would come from asset info
+            quantity: quantity,
+            averagePrice: holding.value / quantity, // Calculate average price
+            currentPrice: holding.value / quantity, // Current price from value
+            marketValue: holding.value,
+            unrealizedPnL: holding.value - (holding.value * 0.95), // Mock P&L calculation
+            unrealizedPnLPercent: 5.0, // Mock percentage
+            costBasis: holding.value * 0.95, // Mock cost basis
+            lastUpdated: Date.now(),
+          };
+        });
+
+        setAssets(portfolioAssets);
+        calculateMetrics(portfolioAssets);
+        
+        addNotification(createNotification.success(
+          'Portfolio Updated',
+          'Portfolio data loaded successfully',
+          { category: 'trading' }
+        ));
+      } catch (error: any) {
+        addNotification(createNotification.error(
+          'Portfolio Error',
+          error.message || 'Failed to load portfolio data',
+          { category: 'trading' }
+        ));
+        setAssets([]);
+        setMetrics(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPortfolioData();
+  }, [addNotification]);
 
   const calculateMetrics = (portfolioAssets: PortfolioAsset[]) => {
     const totalValue = portfolioAssets.reduce((sum, asset) => sum + asset.marketValue, 0);
@@ -176,9 +174,50 @@ export const PortfolioTracker: React.FC<PortfolioTrackerProps> = ({ className = 
 
   const handleRefresh = async () => {
     setLoading(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setLoading(false);
+    try {
+      // Fetch updated portfolio data from backend
+      const [balanceResponse, portfolioReport] = await Promise.all([
+        finDAGApi.getWalletBalance(),
+        finDAGApi.getPortfolioReport()
+      ]);
+
+      // Convert API response to PortfolioAsset format
+      const portfolioAssets: PortfolioAsset[] = portfolioReport.holdings.map(holding => {
+        const assetInfo = balanceResponse.balances.find(b => b.asset === holding.asset);
+        const quantity = assetInfo ? assetInfo.amount : holding.amount;
+        
+        return {
+          asset: holding.asset,
+          symbol: holding.asset,
+          name: holding.asset, // In real app, this would come from asset info
+          quantity: quantity,
+          averagePrice: holding.value / quantity, // Calculate average price
+          currentPrice: holding.value / quantity, // Current price from value
+          marketValue: holding.value,
+          unrealizedPnL: holding.value - (holding.value * 0.95), // Mock P&L calculation
+          unrealizedPnLPercent: 5.0, // Mock percentage
+          costBasis: holding.value * 0.95, // Mock cost basis
+          lastUpdated: Date.now(),
+        };
+      });
+
+      setAssets(portfolioAssets);
+      calculateMetrics(portfolioAssets);
+      
+      addNotification(createNotification.success(
+        'Portfolio Refreshed',
+        'Portfolio data updated successfully',
+        { category: 'trading' }
+      ));
+    } catch (error: any) {
+      addNotification(createNotification.error(
+        'Refresh Error',
+        error.message || 'Failed to refresh portfolio data',
+        { category: 'trading' }
+      ));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleExport = () => {
