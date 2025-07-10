@@ -1,0 +1,45 @@
+[package]
+name = "findag-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "FinDAG Sled-based persistent storage"
+license.workspace = true
+repository.workspace = true
+keywords = ["blockchain", "storage", "sled", "database", "findag"]
+categories = ["algorithms", "cryptography", "database"]
+
+[dependencies]
+# FinDAG dependencies
+findag-core = { path = "../findag-core" }
+findag-types = { path = "../findag-types" }
+
+# Workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+prometheus.workspace = true
+lazy_static.workspace = true
+threadpool.workspace = true
+anyhow.workspace = true
+jsonwebtoken.workspace = true
+once_cell.workspace = true
+metrics.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+bincode.workspace = true
+uuid.workspace = true
+rand.workspace = true
+rand_core.workspace = true
+fastrand.workspace = true
+
+# Storage dependencies
+sled = "0.34"
+dashmap = "5.5"
+crossbeam-channel = "0.5"
+crossbeam-queue = "0.3"
+parking_lot = "0.12" 

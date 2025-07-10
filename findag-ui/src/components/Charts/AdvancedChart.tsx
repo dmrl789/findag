@@ -1,10 +1,9 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-  ComposedChart,
   LineChart,
   Line,
-  Area,
   AreaChart,
+  Area,
   BarChart,
   Bar,
   XAxis,
@@ -12,28 +11,61 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  ComposedChart,
+  Scatter,
+  ScatterChart,
+  ZAxis,
   ReferenceLine,
-  Brush,
-  Legend,
+  ReferenceArea,
+  Label,
+  Sector,
+  Cell as PieCell,
 } from 'recharts';
 import { format } from 'date-fns';
 import { 
+  BarChart3, 
   TrendingUp, 
   TrendingDown, 
-  Minus, 
-  Settings, 
+  Activity,
+  Layers,
+  Minus,
+  Settings,
   Download,
   Maximize2,
   Minimize2,
-  Layers
+  PenTool,
+  Ruler,
+  Square,
+  Circle,
+  Type,
+  Eraser,
+  Undo2,
+  Redo2,
+  Save,
+  Loader2
 } from 'lucide-react';
 import { PricePoint, TradingPair } from '../../types';
 import { formatNumber, formatPrice } from '../../utils/formatters';
 
+interface DrawingTool {
+  id: string;
+  type: 'trendline' | 'horizontal' | 'vertical' | 'fibonacci' | 'rectangle' | 'ellipse' | 'text' | 'arrow';
+  points: { x: number; y: number }[];
+  properties: {
+    color: string;
+    width: number;
+    style: 'solid' | 'dashed' | 'dotted';
+    label?: string;
+  };
+}
+
 interface AdvancedChartProps {
   pair: string;
   data: PricePoint[];
-  timeFrame: '1m' | '5m' | '15m' | '1h' | '4h' | '1d' | '1w';
+  timeFrame: '1m' | '1h' | '3h' | '1D' | '1W' | '1M' | '1Y' | '5Y';
   chartType: 'line' | 'candlestick' | 'area' | 'volume' | 'technical';
   onTimeFrameChange: (timeFrame: string) => void;
   onChartTypeChange: (type: string) => void;
@@ -54,15 +86,7 @@ interface TechnicalIndicators {
   volume: number[];
 }
 
-const timeFrameOptions = [
-  { value: '1m', label: '1m' },
-  { value: '5m', label: '5m' },
-  { value: '15m', label: '15m' },
-  { value: '1h', label: '1h' },
-  { value: '4h', label: '4h' },
-  { value: '1d', label: '1d' },
-  { value: '1w', label: '1w' },
-];
+
 
 const chartTypeOptions = [
   { value: 'line', label: 'Line' },
@@ -70,6 +94,17 @@ const chartTypeOptions = [
   { value: 'area', label: 'Area' },
   { value: 'volume', label: 'Volume' },
   { value: 'technical', label: 'Technical' },
+];
+
+const drawingTools = [
+  { id: 'trendline', icon: TrendingUp, label: 'Trend Line', color: '#3B82F6' },
+  { id: 'horizontal', icon: Minus, label: 'Horizontal Line', color: '#10B981' },
+  { id: 'vertical', icon: Minus, label: 'Vertical Line', color: '#F59E0B' },
+  { id: 'fibonacci', icon: Ruler, label: 'Fibonacci', color: '#8B5CF6' },
+  { id: 'rectangle', icon: Square, label: 'Rectangle', color: '#EF4444' },
+  { id: 'ellipse', icon: Circle, label: 'Ellipse', color: '#EC4899' },
+  { id: 'text', icon: Type, label: 'Text', color: '#6B7280' },
+  { id: 'arrow', icon: TrendingUp, label: 'Arrow', color: '#059669' },
 ];
 
 export const AdvancedChart: React.FC<AdvancedChartProps> = ({
@@ -88,52 +123,64 @@ export const AdvancedChart: React.FC<AdvancedChartProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [selectedRange, setSelectedRange] = useState<[number, number] | null>(null);
+  const [activeDrawingTool, setActiveDrawingTool] = useState<string | null>(null);
+  const [drawings, setDrawings] = useState<DrawingTool[]>([]);
+  const [drawingHistory, setDrawingHistory] = useState<DrawingTool[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentDrawing, setCurrentDrawing] = useState<DrawingTool | null>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
 
   // Calculate technical indicators
   const technicalData = useMemo(() => {
     if (data.length === 0) return { chartData: [], indicators: null };
 
-    const chartData = data.map((point) => ({
-      ...point,
-      time: format(new Date(point.timestamp), 'HH:mm'),
-      date: format(new Date(point.timestamp), 'MMM dd'),
-      formattedPrice: formatPrice(point.close),
-      formattedVolume: formatNumber(point.volume),
-    }));
+    try {
+      const chartData = data.map((point) => ({
+        ...point,
+        time: format(new Date(point.timestamp), 'HH:mm'),
+        date: format(new Date(point.timestamp), 'MMM dd'),
+        formattedPrice: formatPrice(point.close),
+        formattedVolume: formatNumber(point.volume),
+      }));
 
-    // Calculate Simple Moving Averages
-    const sma20 = calculateSMA(data.map(d => d.close), 20);
-    const sma50 = calculateSMA(data.map(d => d.close), 50);
+      // Calculate Simple Moving Averages
+      const sma20 = calculateSMA(data.map(d => d.close), 20);
+      const sma50 = calculateSMA(data.map(d => d.close), 50);
 
-    // Calculate Bollinger Bands
-    const bb = calculateBollingerBands(data.map(d => d.close), 20, 2);
+      // Calculate Bollinger Bands
+      const bb = calculateBollingerBands(data.map(d => d.close), 20, 2);
 
-    // Calculate RSI
-    const rsi = calculateRSI(data.map(d => d.close), 14);
+      // Calculate RSI
+      const rsi = calculateRSI(data.map(d => d.close), 14);
 
-    // Add indicators to chart data
-    const enhancedData = chartData.map((point, index) => ({
-      ...point,
-      sma20: sma20[index] || null,
-      sma50: sma50[index] || null,
-      bbUpper: bb.upper[index] || null,
-      bbLower: bb.lower[index] || null,
-      bbMiddle: bb.middle[index] || null,
-      rsi: rsi[index] || null,
-    }));
+      // Add indicators to chart data
+      const enhancedData = chartData.map((point, index) => ({
+        ...point,
+        sma20: sma20[index] || null,
+        sma50: sma50[index] || null,
+        bbUpper: bb.upper[index] || null,
+        bbLower: bb.lower[index] || null,
+        bbMiddle: bb.middle[index] || null,
+        rsi: rsi[index] || null,
+      }));
 
-    return {
-      chartData: enhancedData,
-      indicators: {
-        sma20,
-        sma50,
-        bbUpper: bb.upper,
-        bbLower: bb.lower,
-        bbMiddle: bb.middle,
-        rsi,
-        volume: data.map(d => d.volume),
-      }
-    };
+      return {
+        chartData: enhancedData,
+        indicators: {
+          sma20,
+          sma50,
+          bbUpper: bb.upper,
+          bbLower: bb.lower,
+          bbMiddle: bb.middle,
+          rsi,
+          volume: data.map(d => d.volume),
+        }
+      };
+    } catch (error) {
+      console.error('Error processing chart data:', error);
+      return { chartData: [], indicators: null };
+    }
   }, [data]);
 
   // Calculate price statistics
@@ -160,6 +207,78 @@ export const AdvancedChart: React.FC<AdvancedChartProps> = ({
       open: previous.open,
     };
   }, [data]);
+
+  // Drawing tools handlers
+  const handleDrawingToolSelect = (toolId: string) => {
+    setActiveDrawingTool(activeDrawingTool === toolId ? null : toolId);
+    setIsDrawing(false);
+    setCurrentDrawing(null);
+  };
+
+  const handleChartClick = (event: any) => {
+    if (!activeDrawingTool || !chartRef.current) return;
+
+    const rect = chartRef.current.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    if (!isDrawing) {
+      // Start drawing
+      const newDrawing: DrawingTool = {
+        id: Date.now().toString(),
+        type: activeDrawingTool as any,
+        points: [{ x, y }],
+        properties: {
+          color: drawingTools.find(t => t.id === activeDrawingTool)?.color || '#3B82F6',
+          width: 2,
+          style: 'solid',
+        }
+      };
+      setCurrentDrawing(newDrawing);
+      setIsDrawing(true);
+    } else {
+      // Complete drawing
+      if (currentDrawing) {
+        const completedDrawing = {
+          ...currentDrawing,
+          points: [...currentDrawing.points, { x, y }]
+        };
+        
+        addToHistory();
+        setDrawings(prev => [...prev, completedDrawing]);
+        setCurrentDrawing(null);
+        setIsDrawing(false);
+        setActiveDrawingTool(null);
+      }
+    }
+  };
+
+  const addToHistory = () => {
+    setDrawingHistory(prev => {
+      const newHistory = prev.slice(0, historyIndex + 1);
+      return [...newHistory, [...drawings]];
+    });
+    setHistoryIndex(prev => prev + 1);
+  };
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      setHistoryIndex(prev => prev - 1);
+      setDrawings([...drawingHistory[historyIndex - 1]]);
+    }
+  };
+
+  const redo = () => {
+    if (historyIndex < drawingHistory.length - 1) {
+      setHistoryIndex(prev => prev + 1);
+      setDrawings([...drawingHistory[historyIndex + 1]]);
+    }
+  };
+
+  const clearDrawings = () => {
+    addToHistory();
+    setDrawings([]);
+  };
 
   const handleRangeChange = useCallback((range: [number, number]) => {
     setSelectedRange(range);
@@ -225,23 +344,6 @@ export const AdvancedChart: React.FC<AdvancedChartProps> = ({
 
         {/* Controls */}
         <div className="flex items-center space-x-4">
-          {/* Time frame selector */}
-          <div className="flex bg-gray-100 rounded-lg p-1">
-            {timeFrameOptions.map((option) => (
-              <button
-                key={option.value}
-                onClick={() => onTimeFrameChange(option.value)}
-                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
-                  timeFrame === option.value
-                    ? 'bg-white text-primary-600 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-
           {/* Chart type selector */}
           <div className="flex bg-gray-100 rounded-lg p-1">
             {chartTypeOptions.map((option) => (
@@ -283,6 +385,66 @@ export const AdvancedChart: React.FC<AdvancedChartProps> = ({
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Drawing Tools Toolbar */}
+      <div className="flex items-center justify-between p-3 bg-gray-50 border-b">
+        <div className="flex items-center space-x-2">
+          <span className="text-sm font-medium text-gray-700">Drawing Tools:</span>
+          <div className="flex items-center space-x-1">
+            {drawingTools.map((tool) => {
+              const Icon = tool.icon;
+              return (
+                <button
+                  key={tool.id}
+                  onClick={() => handleDrawingToolSelect(tool.id)}
+                  className={`p-2 rounded-md transition-colors ${
+                    activeDrawingTool === tool.id
+                      ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                  }`}
+                  title={tool.label}
+                >
+                  <Icon className="w-4 h-4" />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={undo}
+            disabled={historyIndex <= 0}
+            className={`p-2 rounded-md transition-colors ${
+              historyIndex <= 0
+                ? 'text-gray-400 cursor-not-allowed'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+            title="Undo"
+          >
+            <Undo2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={redo}
+            disabled={historyIndex >= drawingHistory.length - 1}
+            className={`p-2 rounded-md transition-colors ${
+              historyIndex >= drawingHistory.length - 1
+                ? 'text-gray-400 cursor-not-allowed'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+            title="Redo"
+          >
+            <Redo2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={clearDrawings}
+            className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md"
+            title="Clear All Drawings"
+          >
+            <Eraser className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -353,12 +515,144 @@ export const AdvancedChart: React.FC<AdvancedChartProps> = ({
         </div>
       )}
 
-      {/* Chart */}
-      <div className="h-96">
-        <ResponsiveContainer width="100%" height="100%">
-          {renderChart()}
-        </ResponsiveContainer>
-      </div>
+              {/* Chart */}
+        <div className="h-96 relative" ref={chartRef} onClick={handleChartClick}>
+          <ResponsiveContainer width="100%" height="100%">
+            {renderChart()}
+          </ResponsiveContainer>
+          
+          {/* Drawing overlay */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none">
+            {drawings.map((drawing) => (
+              <g key={drawing.id}>
+                {drawing.type === 'trendline' && drawing.points.length === 2 && (
+                  <line
+                    x1={drawing.points[0].x}
+                    y1={drawing.points[0].y}
+                    x2={drawing.points[1].x}
+                    y2={drawing.points[1].y}
+                    stroke={drawing.properties.color}
+                    strokeWidth={drawing.properties.width}
+                    strokeDasharray={drawing.properties.style === 'dashed' ? '5,5' : drawing.properties.style === 'dotted' ? '2,2' : 'none'}
+                  />
+                )}
+                {drawing.type === 'horizontal' && drawing.points.length === 1 && (
+                  <line
+                    x1={0}
+                    y1={drawing.points[0].y}
+                    x2="100%"
+                    y2={drawing.points[0].y}
+                    stroke={drawing.properties.color}
+                    strokeWidth={drawing.properties.width}
+                    strokeDasharray={drawing.properties.style === 'dashed' ? '5,5' : drawing.properties.style === 'dotted' ? '2,2' : 'none'}
+                  />
+                )}
+                {drawing.type === 'vertical' && drawing.points.length === 1 && (
+                  <line
+                    x1={drawing.points[0].x}
+                    y1={0}
+                    x2={drawing.points[0].x}
+                    y2="100%"
+                    stroke={drawing.properties.color}
+                    strokeWidth={drawing.properties.width}
+                    strokeDasharray={drawing.properties.style === 'dashed' ? '5,5' : drawing.properties.style === 'dotted' ? '2,2' : 'none'}
+                  />
+                )}
+                {drawing.type === 'rectangle' && drawing.points.length === 2 && (
+                  <rect
+                    x={Math.min(drawing.points[0].x, drawing.points[1].x)}
+                    y={Math.min(drawing.points[0].y, drawing.points[1].y)}
+                    width={Math.abs(drawing.points[1].x - drawing.points[0].x)}
+                    height={Math.abs(drawing.points[1].y - drawing.points[0].y)}
+                    fill="none"
+                    stroke={drawing.properties.color}
+                    strokeWidth={drawing.properties.width}
+                    strokeDasharray={drawing.properties.style === 'dashed' ? '5,5' : drawing.properties.style === 'dotted' ? '2,2' : 'none'}
+                  />
+                )}
+                {drawing.type === 'ellipse' && drawing.points.length === 2 && (
+                  <ellipse
+                    cx={(drawing.points[0].x + drawing.points[1].x) / 2}
+                    cy={(drawing.points[0].y + drawing.points[1].y) / 2}
+                    rx={Math.abs(drawing.points[1].x - drawing.points[0].x) / 2}
+                    ry={Math.abs(drawing.points[1].y - drawing.points[0].y) / 2}
+                    fill="none"
+                    stroke={drawing.properties.color}
+                    strokeWidth={drawing.properties.width}
+                    strokeDasharray={drawing.properties.style === 'dashed' ? '5,5' : drawing.properties.style === 'dotted' ? '2,2' : 'none'}
+                  />
+                )}
+                {drawing.type === 'arrow' && drawing.points.length === 2 && (
+                  <g>
+                    <line
+                      x1={drawing.points[0].x}
+                      y1={drawing.points[0].y}
+                      x2={drawing.points[1].x}
+                      y2={drawing.points[1].y}
+                      stroke={drawing.properties.color}
+                      strokeWidth={drawing.properties.width}
+                      markerEnd="url(#arrowhead)"
+                    />
+                    <defs>
+                      <marker
+                        id="arrowhead"
+                        markerWidth="10"
+                        markerHeight="7"
+                        refX="9"
+                        refY="3.5"
+                        orient="auto"
+                      >
+                        <polygon
+                          points="0 0, 10 3.5, 0 7"
+                          fill={drawing.properties.color}
+                        />
+                      </marker>
+                    </defs>
+                  </g>
+                )}
+              </g>
+            ))}
+            
+            {/* Current drawing preview */}
+            {currentDrawing && currentDrawing.points.length === 1 && (
+              <g>
+                {currentDrawing.type === 'trendline' && (
+                  <line
+                    x1={currentDrawing.points[0].x}
+                    y1={currentDrawing.points[0].y}
+                    x2={currentDrawing.points[0].x}
+                    y2={currentDrawing.points[0].y}
+                    stroke={currentDrawing.properties.color}
+                    strokeWidth={currentDrawing.properties.width}
+                    strokeDasharray="5,5"
+                  />
+                )}
+                {currentDrawing.type === 'horizontal' && (
+                  <line
+                    x1={0}
+                    y1={currentDrawing.points[0].y}
+                    x2="100%"
+                    y2={currentDrawing.points[0].y}
+                    stroke={currentDrawing.properties.color}
+                    strokeWidth={currentDrawing.properties.width}
+                    strokeDasharray="5,5"
+                  />
+                )}
+                {currentDrawing.type === 'vertical' && (
+                  <line
+                    x1={currentDrawing.points[0].x}
+                    y1={0}
+                    x2={currentDrawing.points[0].x}
+                    y2="100%"
+                    stroke={currentDrawing.properties.color}
+                    strokeWidth={currentDrawing.properties.width}
+                    strokeDasharray="5,5"
+                  />
+                )}
+              </g>
+            )}
+          </svg>
+        </div>
 
       {/* Technical Analysis Panel */}
       {chartType === 'technical' && technicalData.indicators && (
@@ -430,24 +724,31 @@ export const AdvancedChart: React.FC<AdvancedChartProps> = ({
 
       case 'candlestick':
         return (
-          <ComposedChart data={chartData}>
+          <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis dataKey="time" stroke="#6b7280" fontSize={12} />
             <YAxis stroke="#6b7280" fontSize={12} tickFormatter={formatPrice} />
             <Tooltip content={renderTooltip} />
-            <Area dataKey="high" stroke="#10b981" fill="#10b981" fillOpacity={0.1} strokeWidth={1} />
-            <Area dataKey="low" stroke="#ef4444" fill="#ef4444" fillOpacity={0.1} strokeWidth={1} />
+            
+            {/* OHLC representation as lines */}
+            <Line type="monotone" dataKey="open" stroke="#6b7280" strokeWidth={1} strokeDasharray="2 2" />
+            <Line type="monotone" dataKey="high" stroke="#10b981" strokeWidth={1} />
+            <Line type="monotone" dataKey="low" stroke="#ef4444" strokeWidth={1} />
             <Line type="monotone" dataKey="close" stroke="#3b82f6" strokeWidth={2} />
+            
+            {/* Moving averages */}
             {showMA && (
               <>
                 <Line type="monotone" dataKey="sma20" stroke="#f59e0b" strokeWidth={1} strokeDasharray="3 3" />
                 <Line type="monotone" dataKey="sma50" stroke="#8b5cf6" strokeWidth={1} strokeDasharray="3 3" />
               </>
             )}
+            
+            {/* Volume */}
             {showVolume && (
               <Bar dataKey="volume" fill="#10b981" opacity={0.3} yAxisId={1} />
             )}
-          </ComposedChart>
+          </LineChart>
         );
 
       case 'area':

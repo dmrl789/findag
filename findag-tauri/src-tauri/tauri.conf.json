@@ -1,0 +1,180 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "FinDAG Desktop",
+    "version": "0.1.0"
+  },
+  "permissions": {
+    "fs": {
+      "all": true,
+      "scope": [
+        "$APPDATA/findag-desktop/*",
+        "$APPDATA/findag-desktop/**/*",
+        "$LOCALDATA/findag-desktop/*",
+        "$LOCALDATA/findag-desktop/**/*",
+        "$DOCUMENT/findag-desktop/*",
+        "$DOCUMENT/findag-desktop/**/*"
+      ]
+    },
+    "shell": {
+      "open": true
+    },
+    "dialog": {
+      "all": true
+    },
+    "notification": {
+      "all": true
+    },
+    "globalShortcut": {
+      "all": true
+    },
+    "window": {
+      "all": true
+    },
+    "path": {
+      "all": true
+    },
+    "protocol": {
+      "all": true,
+      "asset": true,
+      "assetScope": {
+        "allow": ["**"]
+      }
+    }
+  },
+  "tauri": {
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.findag.desktop",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "resources": [
+        "configs/*",
+        "assets/*"
+      ],
+      "externalBin": [],
+      "copyright": "Copyright © 2024 FinDAG Team",
+      "category": "DeveloperTool",
+      "shortDescription": "Institutional-grade blockchain desktop application",
+      "longDescription": "FinDAG Desktop is a professional blockchain application for financial institutions, providing high-performance trading, consensus management, and enterprise features.",
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.0-37",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1",
+          "libnotify4"
+        ]
+      },
+      "macOS": {
+        "entitlements": null,
+        "exceptionDomain": "",
+        "frameworks": [],
+        "providerShortName": null,
+        "signingIdentity": null,
+        "hardenedRuntime": true
+      },
+      "windows": {
+        "certificateThumbprint": null,
+        "digestAlgorithm": "sha256",
+        "timestampUrl": ""
+      }
+    },
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "resizable": true,
+        "title": "FinDAG Desktop",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1200,
+        "minHeight": 800,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "visible": true,
+        "skipTaskbar": false,
+        "focus": true,
+        "closable": true,
+        "minimizable": true,
+        "maximizable": true,
+        "titleBarStyle": "Overlay",
+        "acceptFirstMouse": false,
+        "tabbingIdentifier": null,
+        "hiddenTitle": false,
+        "contentProtected": false,
+        "theme": "Light",
+        "label": "main",
+        "fileDropEnabled": true
+      },
+      {
+        "fullscreen": false,
+        "resizable": true,
+        "title": "FinDAG - Trading View",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 1000,
+        "minHeight": 700,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "visible": false,
+        "skipTaskbar": false,
+        "focus": false,
+        "closable": true,
+        "minimizable": true,
+        "maximizable": true,
+        "titleBarStyle": "Overlay",
+        "acceptFirstMouse": false,
+        "tabbingIdentifier": null,
+        "hiddenTitle": false,
+        "contentProtected": false,
+        "theme": "Dark",
+        "label": "trading",
+        "fileDropEnabled": false
+      },
+      {
+        "fullscreen": false,
+        "resizable": true,
+        "title": "FinDAG - DAG Explorer",
+        "width": 1000,
+        "height": 700,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "visible": false,
+        "skipTaskbar": false,
+        "focus": false,
+        "closable": true,
+        "minimizable": true,
+        "maximizable": true,
+        "titleBarStyle": "Overlay",
+        "acceptFirstMouse": false,
+        "tabbingIdentifier": null,
+        "hiddenTitle": false,
+        "contentProtected": false,
+        "theme": "Dark",
+        "label": "dag-explorer",
+        "fileDropEnabled": false
+      }
+    ]
+  }
+} 

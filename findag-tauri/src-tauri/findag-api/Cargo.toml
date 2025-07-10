@@ -1,0 +1,53 @@
+[package]
+name = "findag-api"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "FinDAG HTTP API and WebSocket Server"
+license.workspace = true
+repository.workspace = true
+keywords = ["blockchain", "api", "websocket", "http", "findag"]
+categories = ["algorithms", "cryptography", "web-programming"]
+
+[dependencies]
+# FinDAG dependencies
+findag-core = { path = "../findag-core" }
+findag-types = { path = "../findag-types" }
+findag-consensus = { path = "../findag-consensus" }
+findag-network = { path = "../findag-network" }
+findag-storage = { path = "../findag-storage" }
+findag-security = { path = "../findag-security" }
+
+# Workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+prometheus.workspace = true
+lazy_static.workspace = true
+threadpool.workspace = true
+anyhow.workspace = true
+jsonwebtoken.workspace = true
+once_cell.workspace = true
+metrics.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+bincode.workspace = true
+uuid.workspace = true
+rand.workspace = true
+rand_core.workspace = true
+fastrand.workspace = true
+
+# Web framework dependencies
+axum = { version = "0.7", features = ["macros"] }
+tower = { version = "0.4", features = ["timeout", "limit"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-full"] }
+hyper = { version = "1.0", features = ["full"] }
+http = "1.0"
+websocket = "0.26"
+tokio-tungstenite = "0.21"
+tungstenite = "0.21"
+url = "2.4" 

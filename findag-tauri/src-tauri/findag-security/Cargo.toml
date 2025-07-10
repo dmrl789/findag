@@ -1,0 +1,54 @@
+[package]
+name = "findag-security"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "FinDAG Security and Authentication"
+license.workspace = true
+repository.workspace = true
+keywords = ["blockchain", "security", "authentication", "encryption", "findag"]
+categories = ["algorithms", "cryptography", "security"]
+
+[dependencies]
+# FinDAG dependencies
+findag-core = { path = "../findag-core" }
+findag-types = { path = "../findag-types" }
+
+# Workspace dependencies
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+prometheus.workspace = true
+lazy_static.workspace = true
+threadpool.workspace = true
+anyhow.workspace = true
+jsonwebtoken.workspace = true
+once_cell.workspace = true
+metrics.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+bincode.workspace = true
+uuid.workspace = true
+rand.workspace = true
+rand_core.workspace = true
+fastrand.workspace = true
+argon2.workspace = true
+aes-gcm.workspace = true
+chacha20poly1305.workspace = true
+curve25519-dalek.workspace = true
+x25519-dalek.workspace = true
+base64.workspace = true
+hex.workspace = true
+rpassword.workspace = true
+
+# Security-specific dependencies
+bcrypt = "0.15"
+scrypt = "0.11"
+pbkdf2 = "0.12"
+hmac = "0.12"
+sha-1 = "0.10"
+ripemd = "0.1" 

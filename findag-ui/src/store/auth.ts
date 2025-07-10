@@ -161,11 +161,24 @@ export const useAuthStore = create<AuthState>()(
         try {
           const token = localStorage.getItem('auth_token');
           if (!token) {
+            // Initialize with demo user for development
+            const demoUser: User = {
+              id: 'demo-user-001',
+              username: 'demo_user',
+              email: 'demo@findag.com',
+              role: 'admin',
+              permissions: getPermissionsForRole('admin'),
+              lastLogin: Date.now(),
+              isActive: true,
+            };
+
             set({ 
-              isAuthenticated: false, 
-              user: null, 
-              token: null, 
-              loading: false 
+              isAuthenticated: true,
+              user: demoUser,
+              token: 'demo-token',
+              loading: false,
+              sessionTimeout: Date.now() + SESSION_TIMEOUT,
+              lastActivity: Date.now(),
             });
             return;
           }

@@ -1,241 +1,100 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
-  Activity, 
-  Blocks, 
+  Home, 
+  TrendingUp, 
+  Network, 
   Users, 
-  Clock, 
   BarChart3, 
-  Settings, 
-  Zap,
-  Network,
-  Database,
+  Activity,
+  Settings,
+  User,
+  FileText,
   Shield,
-  TrendingUp
+  Target,
+  Globe,
+  Zap
 } from 'lucide-react';
-import { useAppStore } from '../../store';
 import { useAuthStore } from '../../store/auth';
+import { ThemeToggle } from '../Common/ThemeToggle';
 
-const navigationItems = [
-  {
-    name: 'Dashboard',
-    href: '/',
-    icon: Activity,
-    description: 'Network overview and metrics',
-    permission: 'dashboard:read',
-    roles: ['admin', 'user', 'validator'],
-  },
-  {
-    name: 'Trading',
-    href: '/trading',
-    icon: TrendingUp,
-    description: 'Real-time price charts and trading',
-    permission: 'trading:read',
-    roles: ['admin', 'user', 'validator'],
-  },
-  {
-    name: 'DAG Explorer',
-    href: '/dag',
-    icon: Blocks,
-    description: 'Visual DAG structure',
-    permission: 'network:read',
-    roles: ['admin', 'user', 'validator'],
-  },
-  {
-    name: 'Transactions',
-    href: '/transactions',
-    icon: Zap,
-    description: 'Transaction history and details',
-    permission: 'transactions:read',
-    roles: ['admin', 'user', 'validator'],
-  },
-  {
-    name: 'Validators',
-    href: '/validators',
-    icon: Users,
-    description: 'Validator management and status',
-    permission: 'validators:read',
-    roles: ['admin', 'validator'],
-  },
-  {
-    name: 'Rounds',
-    href: '/rounds',
-    icon: Clock,
-    description: 'Round finalization and history',
-    permission: 'rounds:read',
-    roles: ['admin', 'validator'],
-  },
-  {
-    name: 'Network',
-    href: '/network',
-    icon: Network,
-    description: 'P2P network topology',
-    permission: 'network:read',
-    roles: ['admin', 'user', 'validator'],
-  },
-  {
-    name: 'Metrics',
-    href: '/metrics',
-    icon: BarChart3,
-    description: 'Performance analytics',
-    permission: 'metrics:read',
-    roles: ['admin', 'user', 'validator'],
-  },
-  {
-    name: 'Storage',
-    href: '/storage',
-    icon: Database,
-    description: 'Blockchain storage status',
-    permission: 'system:read',
-    roles: ['admin'],
-  },
-  {
-    name: 'Security',
-    href: '/security',
-    icon: Shield,
-    description: 'Security and compliance',
-    permission: 'system:read',
-    roles: ['admin'],
-  },
-  {
-    name: 'Settings',
-    href: '/settings',
-    icon: Settings,
-    description: 'Application configuration',
-    permission: 'system:read',
-    roles: ['admin'],
-  },
-];
+interface NavItem {
+  name: string;
+  path: string;
+  icon: React.ReactNode;
+  badge?: string;
+  permission?: string;
+}
 
 export const Sidebar: React.FC = () => {
   const location = useLocation();
-  const { connectionStatus } = useAppStore();
-  const { user, hasPermission, hasRole } = useAuthStore();
+  const { user } = useAuthStore();
 
-  const getStatusColor = () => {
-    switch (connectionStatus) {
-      case 'connected':
-        return 'bg-success-500';
-      case 'connecting':
-        return 'bg-warning-500';
-      case 'disconnected':
-        return 'bg-danger-500';
-      default:
-        return 'bg-gray-500';
-    }
-  };
-
-  const getStatusText = () => {
-    switch (connectionStatus) {
-      case 'connected':
-        return 'Connected';
-      case 'connecting':
-        return 'Connecting...';
-      case 'disconnected':
-        return 'Disconnected';
-      default:
-        return 'Unknown';
-    }
-  };
-
-  // Filter navigation items based on user permissions
-  const filteredNavigationItems = navigationItems.filter(item => {
-    // Check if user has the required permission
-    if (item.permission && !hasPermission(item.permission)) {
-      return false;
-    }
-    
-    // Check if user has one of the required roles
-    if (item.roles && !item.roles.some(role => hasRole(role))) {
-      return false;
-    }
-    
-    return true;
-  });
+  const navigationItems: NavItem[] = [
+    { name: 'Dashboard', path: '/', icon: <Home className="w-5 h-5" /> },
+    { name: 'Trading', path: '/trading', icon: <TrendingUp className="w-5 h-5" /> },
+    { name: 'DAG Explorer', path: '/dag', icon: <Network className="w-5 h-5" /> },
+    { name: 'Transactions', path: '/transactions', icon: <Activity className="w-5 h-5" /> },
+    { name: 'Validators', path: '/validators', icon: <Users className="w-5 h-5" /> },
+    { name: 'Metrics', path: '/metrics', icon: <BarChart3 className="w-5 h-5" /> },
+    { name: 'Network', path: '/network', icon: <Globe className="w-5 h-5" /> },
+    { name: 'Rounds', path: '/rounds', icon: <Zap className="w-5 h-5" /> },
+    { name: 'Charts', path: '/charts', icon: <BarChart3 className="w-5 h-5" /> },
+    { name: 'Compliance', path: '/compliance', icon: <Shield className="w-5 h-5" /> },
+    { name: 'Compliance Dashboard', path: '/compliance-dashboard', icon: <Target className="w-5 h-5" /> },
+    { name: 'Profile', path: '/profile', icon: <User className="w-5 h-5" /> },
+    { name: 'Status', path: '/status', icon: <Settings className="w-5 h-5" /> },
+  ];
 
   return (
-    <div className="flex flex-col w-64 bg-white border-r border-gray-200 h-full">
+    <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between p-6 border-b border-gray-200">
+      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold text-sm">FD</span>
+          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+            <span className="text-white font-bold text-sm">F</span>
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-gray-900">FinDAG</h1>
-            <p className="text-xs text-gray-500">Financial Blockchain</p>
+            <h1 className="text-lg font-bold text-gray-900 dark:text-white">FinDAG</h1>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Institutional Platform</p>
           </div>
         </div>
       </div>
-
-      {/* Connection Status */}
-      <div className="p-4 border-b border-gray-200">
-        <div className="flex items-center space-x-2">
-          <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} />
-          <span className="text-sm font-medium text-gray-700">{getStatusText()}</span>
-        </div>
-      </div>
-
-      {/* User Info */}
-      {user && (
-        <div className="p-4 border-b border-gray-200">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center">
-              <span className="text-white font-medium text-sm">
-                {user.username.charAt(0).toUpperCase()}
-              </span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 truncate">
-                {user.username}
-              </p>
-              <p className="text-xs text-gray-500 capitalize">
-                {user.role}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {filteredNavigationItems.map((item) => {
-          const isActive = location.pathname === item.href || 
-                          (item.href === '/trading' && location.pathname.startsWith('/trading'));
-          const Icon = item.icon;
-          
+      <nav className="flex-1 p-4 space-y-2">
+        {navigationItems.map((item) => {
+          const isActive = location.pathname === item.path;
           return (
             <Link
               key={item.name}
-              to={item.href}
-              className={`group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors duration-200 ${
+              to={item.path}
+              className={`flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-primary-50 text-primary-700 border border-primary-200'
-                  : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200'
+                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
               }`}
-              title={item.description}
             >
-              <Icon
-                className={`mr-3 h-5 w-5 flex-shrink-0 ${
-                  isActive ? 'text-primary-600' : 'text-gray-400 group-hover:text-gray-500'
-                }`}
-              />
-              {item.name}
+              {item.icon}
+              <span>{item.name}</span>
+              {item.badge && (
+                <span className="ml-auto bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full">
+                  {item.badge}
+                </span>
+              )}
             </Link>
           );
         })}
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-gray-200">
-        <div className="text-xs text-gray-500">
-          <p>FinDAG v1.0.0</p>
-          <p>High-performance blockchain</p>
-          {user && (
-            <p className="mt-1 text-xs text-gray-400">
-              Logged in as {user.role}
-            </p>
-          )}
+      <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+            <span className="text-xs text-gray-500 dark:text-gray-400">System Online</span>
+          </div>
+          <ThemeToggle />
         </div>
       </div>
     </div>

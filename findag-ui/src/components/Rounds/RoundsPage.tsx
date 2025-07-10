@@ -1,21 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Clock, CheckCircle, AlertTriangle, TrendingUp, Users, Zap } from 'lucide-react';
-import { useAppStore } from '../../store';
-import { Round } from '../../types';
-import { formatNumber, formatTimestamp } from '../../utils/formatters';
 
 export const RoundsPage: React.FC = () => {
-  const { currentRound, isLoading, fetchValidators } = useAppStore();
-  const [rounds, setRounds] = useState<Round[]>([]);
-  const [selectedRound, setSelectedRound] = useState<Round | null>(null);
-
-  useEffect(() => {
-    // Fetch rounds data - this would be implemented in the store
-    fetchValidators(); // Placeholder for now
-  }, [fetchValidators]);
-
   // Mock data for demonstration
-  const mockRounds: Round[] = [
+  const mockRounds = [
     {
       number: 45678,
       startTime: Date.now() - 60000,
@@ -63,7 +51,7 @@ export const RoundsPage: React.FC = () => {
     }
   };
 
-  const calculateRoundDuration = (round: Round) => {
+  const calculateRoundDuration = (round: any) => {
     if (!round.endTime) return 'Active';
     const duration = round.endTime - round.startTime;
     return `${Math.floor(duration / 1000)}s`;
@@ -86,59 +74,57 @@ export const RoundsPage: React.FC = () => {
       </div>
 
       {/* Current Round Status */}
-      {currentRound && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Current Round</h2>
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(currentRound.status)}`}>
-              {getStatusIcon(currentRound.status)}
-              <span className="ml-1">{currentRound.status}</span>
-            </span>
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Current Round</h2>
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+            <CheckCircle className="w-4 h-4" />
+            <span className="ml-1">finalized</span>
+          </span>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <Clock className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Round Number</p>
+              <p className="font-semibold text-gray-900">#45678</p>
+            </div>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-blue-100 rounded-lg">
-                <Clock className="w-5 h-5 text-blue-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Round Number</p>
-                <p className="font-semibold text-gray-900">#{currentRound.number}</p>
-              </div>
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-green-100 rounded-lg">
+              <Users className="w-5 h-5 text-green-600" />
             </div>
-            
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <Users className="w-5 h-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Validators</p>
-                <p className="font-semibold text-gray-900">{currentRound.validators.length}</p>
-              </div>
+            <div>
+              <p className="text-sm text-gray-500">Validators</p>
+              <p className="font-semibold text-gray-900">2</p>
             </div>
-            
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-purple-100 rounded-lg">
-                <Zap className="w-5 h-5 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Finalized Blocks</p>
-                <p className="font-semibold text-gray-900">{currentRound.finalizedBlocks.length}</p>
-              </div>
+          </div>
+          
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-purple-100 rounded-lg">
+              <Zap className="w-5 h-5 text-purple-600" />
             </div>
-            
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-yellow-100 rounded-lg">
-                <TrendingUp className="w-5 h-5 text-yellow-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Duration</p>
-                <p className="font-semibold text-gray-900">{calculateRoundDuration(currentRound)}</p>
-              </div>
+            <div>
+              <p className="text-sm text-gray-500">Finalized Blocks</p>
+              <p className="font-semibold text-gray-900">2</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-yellow-100 rounded-lg">
+              <TrendingUp className="w-5 h-5 text-yellow-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Duration</p>
+              <p className="font-semibold text-gray-900">60s</p>
             </div>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Round History */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
@@ -205,17 +191,18 @@ export const RoundsPage: React.FC = () => {
                       {calculateRoundDuration(round)}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {formatTimestamp(round.startTime)}
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">
+                      {new Date(round.startTime).toLocaleTimeString()}
+                    </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {round.endTime ? formatTimestamp(round.endTime) : 'Active'}
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">
+                      {new Date(round.endTime).toLocaleTimeString()}
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <button
-                      onClick={() => setSelectedRound(round)}
-                      className="text-blue-600 hover:text-blue-900"
-                    >
+                    <button className="text-primary-600 hover:text-primary-900">
                       View Details
                     </button>
                   </td>
@@ -225,77 +212,6 @@ export const RoundsPage: React.FC = () => {
           </table>
         </div>
       </div>
-
-      {/* Round Details Modal */}
-      {selectedRound && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-gray-900">Round #{selectedRound.number} Details</h2>
-              <button
-                onClick={() => setSelectedRound(null)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                ✕
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-500">Round Number</label>
-                  <p className="text-sm text-gray-900">#{selectedRound.number}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-500">Status</label>
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(selectedRound.status)}`}>
-                    {getStatusIcon(selectedRound.status)}
-                    <span className="ml-1">{selectedRound.status}</span>
-                  </span>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-500">Start Time</label>
-                  <p className="text-sm text-gray-900">{formatTimestamp(selectedRound.startTime)}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-500">End Time</label>
-                  <p className="text-sm text-gray-900">{selectedRound.endTime ? formatTimestamp(selectedRound.endTime) : 'Active'}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-500">Duration</label>
-                  <p className="text-sm text-gray-900">{calculateRoundDuration(selectedRound)}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-500">Validators</label>
-                  <p className="text-sm text-gray-900">{selectedRound.validators.length}</p>
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-500 mb-2">Validators</label>
-                <div className="space-y-1">
-                  {selectedRound.validators.map((validator, index) => (
-                    <div key={index} className="text-sm text-gray-900 font-mono bg-gray-50 px-2 py-1 rounded">
-                      {validator}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-500 mb-2">Finalized Blocks</label>
-                <div className="space-y-1">
-                  {selectedRound.finalizedBlocks.map((block, index) => (
-                    <div key={index} className="text-sm text-gray-900 font-mono bg-gray-50 px-2 py-1 rounded">
-                      {block}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }; 

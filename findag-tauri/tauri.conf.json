@@ -1,0 +1,157 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist",
+    "withGlobalTauri": false
+  },
+  "package": {
+    "productName": "FinDAG Desktop",
+    "version": "1.0.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "open": true,
+        "scope": [
+          {
+            "name": "FinDAG",
+            "cmd": "findag",
+            "args": ["--help"]
+          }
+        ]
+      },
+      "dialog": {
+        "all": true
+      },
+      "fs": {
+        "all": true,
+        "scope": ["$APPDATA/*", "$APPDATA/findag/*", "$APPDATA/findag/**/*"]
+      },
+      "path": {
+        "all": true
+      },
+      "os": {
+        "all": true
+      },
+      "window": {
+        "all": true
+      },
+      "app": {
+        "all": true
+      },
+      "notification": {
+        "all": true
+      },
+      "globalShortcut": {
+        "all": true
+      },
+      "clipboard": {
+        "all": true
+      },
+      "http": {
+        "all": true,
+        "scope": ["https://api.findag.io/*", "https://*.findag.io/*"]
+      },
+      "store": {
+        "all": true
+      },
+      "event": {
+        "all": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.findag.desktop",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "resources": [],
+      "externalBin": [],
+      "copyright": "Copyright (c) 2024 FinDAG Team",
+      "category": "DeveloperTool",
+      "shortDescription": "Institutional-grade blockchain desktop application",
+      "longDescription": "FinDAG Desktop is a comprehensive blockchain application for institutional trading, compliance, and financial operations.",
+      "deb": {
+        "depends": ["libwebkit2gtk-4.0-37", "libgtk-3-0", "libayatana-appindicator3-1", "libnotify4", "libxtst6", "xdg-utils", "libdrm2", "libgbm1", "libasound2"]
+      },
+      "macOS": {
+        "minimumSystemVersion": "10.13",
+        "entitlements": null,
+        "exceptionDomain": "",
+        "frameworks": [],
+        "providerShortName": null,
+        "signingIdentity": null,
+        "hardenedRuntime": true,
+        "notarization": {
+          "enabled": false,
+          "teamId": "",
+          "appleId": "",
+          "appleIdPassword": ""
+        }
+      },
+      "windows": {
+        "certificateThumbprint": null,
+        "digestAlgorithm": "sha256",
+        "timestampUrl": "http://timestamp.digicert.com"
+      }
+    },
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.findag.io https://*.findag.io wss://*.findag.io; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';"
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "resizable": true,
+        "title": "FinDAG Desktop",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "visible": true,
+        "skipTaskbar": false,
+        "focus": true,
+        "closable": true,
+        "minimizable": true,
+        "maximizable": true,
+        "titleBarStyle": "Overlay",
+        "acceptFirstMouse": false,
+        "tabbingIdentifier": null,
+        "hiddenTitle": false,
+        "contentProtected": false,
+        "theme": "Light",
+        "parent": null,
+        "child": null,
+        "owner": null,
+        "enabled": true,
+        "maximizable": true,
+        "minimizable": true,
+        "resizable": true,
+        "closable": true,
+        "titleBarButtonsVisible": true,
+        "titleBarStyle": "Overlay",
+        "titleBarStyleOverrides": {
+          "backgroundColor": "#1F2937",
+          "foregroundColor": "#FFFFFF"
+        }
+      }
+    ],
+    "plugins": {
+      "shell": {
+        "open": true
+      }
+    }
+  }
+} 

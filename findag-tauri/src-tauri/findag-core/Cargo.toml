@@ -1,0 +1,29 @@
+[package]
+name = "findag-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Core FinDAG blockchain types and functionality"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# Workspace dependencies
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+hex.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+bech32.workspace = true
+bincode.workspace = true
+
+# Additional dependencies
+sled = { version = "0.34", features = ["compression"] }
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3" 
